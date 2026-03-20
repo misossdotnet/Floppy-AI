@@ -1,0 +1,292 @@
+﻿<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Dashboard | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+        {% endif %}
+      </div>
+      <h1>Chat dashboard</h1>
+      {% if payload %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>KPI principaux</h2>
+        <p class="muted-line">
+          Tables: <code>{{ payload.chat_table }}</code> / <code>{{ payload.chat_evaluation_table }}</code>
+        </p>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Sessions evaluees</p>
+            <p class="kpi-value">{{ payload.total_evaluated_sessions }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Score global moyen</p>
+            <p class="kpi-value">
+              {% if payload.avg_global_score is not none %}
+                {{ '%.2f'|format(payload.avg_global_score) }}/5
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Sessions excellentes</p>
+            <p class="kpi-value">
+              {% if payload.excellent_rate_pct is not none %}
+                {{ '%.2f'|format(payload.excellent_rate_pct) }}%
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Sessions problematiques</p>
+            <p class="kpi-value">
+              {% if payload.problematic_rate_pct is not none %}
+                {{ '%.2f'|format(payload.problematic_rate_pct) }}%
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Messages moyens / session</p>
+            <p class="kpi-value">
+              {% if payload.avg_messages_per_session is not none %}
+                {{ '%.2f'|format(payload.avg_messages_per_session) }}
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Top axe faible</p>
+            <p class="kpi-value">
+              {% if payload.weakest_axis %}
+                {{ payload.weakest_axis.label }} ({{ '%.2f'|format(payload.weakest_axis.avg) }}/5)
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Correlation longueur / score</p>
+            <p class="kpi-value">
+              {% if payload.corr_msg_count_rating_global is not none %}
+                {{ '%.3f'|format(payload.corr_msg_count_rating_global) }}
+              {% else %}
+                -
+              {% endif %}
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Moyenne par axe</h2>
+        {% if payload.axis_metrics %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Axe</th>
+                  <th>Moyenne</th>
+                  <th>Visualisation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for axis in payload.axis_metrics %}
+                  <tr>
+                    <td>{{ axis.label }}</td>
+                    <td>
+                      {% if axis.avg is not none %}
+                        <strong>{{ '%.2f'|format(axis.avg) }}</strong>/5
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if axis.avg_pct is not none %}
+                        <div class="metric-bar">
+                          <div class="metric-bar-fill" style="width: {{ axis.avg_pct }}%;"></div>
+                        </div>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune evaluation disponible.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Evolution hebdomadaire des scores</h2>
+        {% if payload.weekly_scores %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Semaine</th>
+                  <th>Sessions</th>
+                  <th>Score global moyen</th>
+                  <th>Moyennes par axe</th>
+                  <th>Visualisation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for week in payload.weekly_scores %}
+                  <tr>
+                    <td><code>{{ week.week_start }}</code></td>
+                    <td>{{ week.sessions_count }}</td>
+                    <td>
+                      {% if week.avg_global is not none %}
+                        <strong>{{ '%.2f'|format(week.avg_global) }}</strong>/5
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>
+                      rel={{ '%.2f'|format(week.avg_relevance) if week.avg_relevance is not none else '-' }},
+                      acc={{ '%.2f'|format(week.avg_accuracy) if week.avg_accuracy is not none else '-' }},
+                      cla={{ '%.2f'|format(week.avg_clarity) if week.avg_clarity is not none else '-' }},
+                      com={{ '%.2f'|format(week.avg_completeness) if week.avg_completeness is not none else '-' }},
+                      hel={{ '%.2f'|format(week.avg_helpfulness) if week.avg_helpfulness is not none else '-' }}
+                    </td>
+                    <td>
+                      {% if week.avg_global_pct is not none %}
+                        <div class="metric-bar">
+                          <div class="metric-bar-fill" style="width: {{ week.avg_global_pct }}%;"></div>
+                        </div>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune serie temporelle disponible.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Relation longueur de session et score</h2>
+        {% if payload.length_score_relation %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nb messages / session</th>
+                  <th>Nb sessions</th>
+                  <th>Score global moyen</th>
+                  <th>Visualisation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in payload.length_score_relation %}
+                  <tr>
+                    <td><strong>{{ item.msg_count }}</strong></td>
+                    <td>{{ item.sessions_count }}</td>
+                    <td>
+                      {% if item.avg_global is not none %}
+                        <strong>{{ '%.2f'|format(item.avg_global) }}</strong>/5
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if item.avg_global_pct is not none %}
+                        <div class="metric-bar">
+                          <div class="metric-bar-fill" style="width: {{ item.avg_global_pct }}%;"></div>
+                        </div>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune relation calculable (sessions evaluees insuffisantes).</p>
+        {% endif %}
+
+        <h3>Vue par classes de sessions</h3>
+        {% if payload.length_buckets %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Classe</th>
+                  <th>Nb sessions</th>
+                  <th>Score global moyen</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for bucket in payload.length_buckets %}
+                  <tr>
+                    <td>{{ bucket.bucket_label }}</td>
+                    <td>{{ bucket.sessions_count }}</td>
+                    <td>
+                      {% if bucket.avg_global is not none %}
+                        <strong>{{ '%.2f'|format(bucket.avg_global) }}</strong>/5
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune classe disponible.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
+

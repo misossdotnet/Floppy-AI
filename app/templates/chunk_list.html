@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chunk List | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+        {% endif %}
+      </div>
+      <h1>Chunk list</h1>
+      {% if payload %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      {% set filter_shard = request.args.get('shard_id') %}
+
+      <section class="card">
+        <h2>Actions</h2>
+        <div class="action-row">
+          {% if filter_shard %}
+            <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=payload.project.slug) }}?shard_id={{ filter_shard }}">Nouveau chunk</a>
+          {% else %}
+            <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=payload.project.slug) }}">Nouveau chunk</a>
+          {% endif %}
+          <a class="ghost-link" href="{{ url_for('project_shard_new', project_slug=payload.project.slug) }}">Nouveau shard</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Chunk list</h2>
+        {% if filter_shard %}
+          <p class="muted-line">Filtre shard: <code>{{ filter_shard }}</code></p>
+        {% endif %}
+        {% if payload.chunks %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>UUID</th>
+                  <th>Shard ID</th>
+                  <th>Titre</th>
+                  <th>Source</th>
+                  <th>Apercu</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for chunk in payload.chunks %}
+                  {% if not filter_shard or chunk.shard_id == filter_shard %}
+                    <tr>
+                      <td><code>{{ chunk.uuid }}</code></td>
+                      <td><code>{{ chunk.shard_id }}</code></td>
+                      <td>{{ chunk.title_document or '-' }}</td>
+                      <td>{{ chunk.source_document or '-' }}</td>
+                      <td>
+                        {% set chunk_preview = (chunk.content_document or '').strip() %}
+                        {% if chunk_preview %}
+                          {{ chunk_preview[:140] }}{% if chunk_preview|length > 140 %}...{% endif %}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                      <td>
+                        <div class="action-row">
+                          <a class="ghost-link" href="{{ url_for('project_chunk_view', project_slug=payload.project.slug, chunk_uuid=chunk.uuid) }}">Visualiser</a>
+                          <form method="post" action="{{ url_for('remove_chunk_item', project_slug=payload.project.slug, chunk_uuid=chunk.uuid) }}" class="inline-form">
+                            <button
+                              type="submit"
+                              class="danger-btn icon-btn icon-delete"
+                              title="Supprimer chunk"
+                              aria-label="Supprimer chunk"
+                            ></button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  {% endif %}
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun chunk.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visualisation Chunk | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+        {% endif %}
+      </div>
+      <h1>Visualisation chunk</h1>
+      {% if payload and chunk %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / Chunk: <code>{{ chunk.uuid }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload and chunk %}
+      <section class="card">
+        <h2>Details</h2>
+        <div class="action-row">
+          {% if chunk.shard_id %}
+            <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=payload.project.slug, shard_uuid=chunk.shard_id) }}">Voir le shard parent</a>
+          {% endif %}
+          <form method="post" action="{{ url_for('remove_chunk_item', project_slug=payload.project.slug, chunk_uuid=chunk.uuid) }}" class="inline-form">
+            <button
+              type="submit"
+              class="danger-btn icon-btn icon-delete"
+              title="Supprimer chunk"
+              aria-label="Supprimer chunk"
+            ></button>
+          </form>
+        </div>
+        <div class="details-grid">
+          <p class="muted-line">UUID: <code>{{ chunk.uuid }}</code></p>
+          <p class="muted-line">Shard ID: <code>{{ chunk.shard_id }}</code></p>
+          <p class="muted-line">Titre: {{ chunk.title_document or '-' }}</p>
+          <p class="muted-line">Source: {{ chunk.source_document or '-' }}</p>
+          <p class="muted-line">URL: {{ chunk.url_document or '-' }}</p>
+          <p class="muted-line">Auteur: {{ chunk.autor_document or '-' }}</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Contenu complet</h2>
+        <pre class="document-content">{{ chunk.content_document or '' }}</pre>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

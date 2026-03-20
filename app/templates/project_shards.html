@@ -1,0 +1,120 @@
+﻿<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vue Shards | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Accueil</a>
+        <a class="ghost-link" href="{{ url_for('projects_train') }}">Vue train</a>
+        <a class="ghost-link" href="{{ url_for('projects_tree') }}">Tree view</a>
+      </div>
+      <h1>Vue shards et chunks</h1>
+      <p class="lead">
+        Cette vue est dediee aux shards et au chunking des documents.
+      </p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">Connexion PostgreSQL impossible: {{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if projects %}
+      {% for project in projects %}
+        <section class="card project-card">
+          <div class="project-head">
+            <h2>{{ project.name }}</h2>
+            <div class="project-stats">
+              <span class="stat-chip"><strong>{{ project.shard_count }}</strong> shard(s)</span>
+              <span class="stat-chip"><strong>{{ project.total_chunks }}</strong> chunk(s)</span>
+              <span class="stat-chip"><strong>{{ project.chat_session_count }}</strong> session(s) chat</span>
+            </div>
+          </div>
+
+          <p class="muted-line">
+            Slug: <code>{{ project.slug }}</code> |
+            Tables: <code>{{ project.shard_table }}</code> / <code>{{ project.chunk_table }}</code> / <code>{{ project.chat_table }}</code>
+          </p>
+          <p class="muted-line">
+            <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Ouvrir Chat-list</a>
+          </p>
+
+          <form method="post" action="{{ url_for('chunkify_project', project_slug=project.slug) }}" class="chunk-form">
+            <input type="hidden" name="return_to" value="projects_shards">
+            <div class="chunk-grid">
+              <label>chunkMaxTokens<input type="number" name="chunkMaxTokens" value="350" min="1"></label>
+              <label>chunkOverlapTokens<input type="number" name="chunkOverlapTokens" value="50" min="0"></label>
+              <label>hardMaxTokens<input type="number" name="hardMaxTokens" value="420" min="1"></label>
+              <label>headingMaxLevel<input type="number" name="headingMaxLevel" value="3" min="1" max="6"></label>
+              <label>tokenEstimator
+                <select name="tokenEstimator">
+                  <option value="words" selected>words</option>
+                  <option value="chars">chars</option>
+                </select>
+              </label>
+              <label>charsPerToken<input type="number" name="charsPerToken" value="4" min="1"></label>
+            </div>
+            <button
+              type="submit"
+              class="icon-btn icon-run"
+              title="Generer les chunks depuis les shards"
+              aria-label="Generer les chunks depuis les shards"
+            ></button>
+          </form>
+
+          {% if project.shards %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Shard UUID</th>
+                    <th>Titre</th>
+                    <th>Source</th>
+                    <th>Nombre de chunks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for shard in project.shards %}
+                    <tr>
+                      <td><code>{{ shard.uuid }}</code></td>
+                      <td>{{ shard.title_document or '-' }}</td>
+                      <td>{{ shard.source_document or '-' }}</td>
+                      <td><strong>{{ shard.chunk_count }}</strong></td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <p class="empty">Aucun shard enregistre pour ce projet.</p>
+          {% endif %}
+        </section>
+      {% endfor %}
+    {% else %}
+      <section class="card">
+        <p class="empty">Aucun projet disponible.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
+

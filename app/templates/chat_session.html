@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session Chat | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
+        {% endif %}
+      </div>
+      <h1>Session conversation</h1>
+      {% if payload %}
+        <p class="lead">
+          Projet: <code>{{ payload.project.name }}</code> /
+          Session: <code>{{ payload.selected_session_id }}</code>
+        </p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Conversation</h2>
+        <p class="muted-line">
+          Session active: <code>{{ payload.selected_session_id }}</code> |
+          Messages: <strong>{{ payload.selected_session_messages|length }}</strong>
+        </p>
+        {% if payload.selected_session_messages %}
+          <div class="chat-thread">
+            {% for message in payload.selected_session_messages %}
+              <article class="chat-message">
+                <div class="chat-message-head">
+                  <span class="chat-type">{{ message.type }}</span>
+                  <span class="chat-id">#{{ message.id }}</span>
+                </div>
+                <pre>{{ message.content }}</pre>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Aucun message sur cette session.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Evaluation de la session</h2>
+        {% if payload.selected_evaluation %}
+          <p class="muted-line">
+            Derniere evaluation: <strong>{{ payload.selected_evaluation.rating_global }}</strong>/5
+            (mise a jour: {{ payload.selected_evaluation.updated_at }})
+          </p>
+        {% endif %}
+        <form method="post" action="{{ url_for('submit_chat_evaluation', project_slug=payload.project.slug) }}" class="train-form">
+          <input type="hidden" name="session_id" value="{{ payload.selected_session_id }}">
+          <div class="rating-grid">
+            <label>
+              rating_relevance
+              <span class="muted-line">La reponse repond-elle bien a la demande ?</span>
+              <select name="rating_relevance" required>
+                <option value="">Choisir</option>
+                {% for n in range(1, 6) %}
+                  <option value="{{ n }}" {% if payload.selected_evaluation and payload.selected_evaluation.rating_relevance == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              rating_accuracy
+              <span class="muted-line">Le contenu semble-t-il exact et fiable ?</span>
+              <select name="rating_accuracy" required>
+                <option value="">Choisir</option>
+                {% for n in range(1, 6) %}
+                  <option value="{{ n }}" {% if payload.selected_evaluation and payload.selected_evaluation.rating_accuracy == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              rating_clarity
+              <span class="muted-line">La reponse est-elle claire et comprehensible ?</span>
+              <select name="rating_clarity" required>
+                <option value="">Choisir</option>
+                {% for n in range(1, 6) %}
+                  <option value="{{ n }}" {% if payload.selected_evaluation and payload.selected_evaluation.rating_clarity == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              rating_completeness
+              <span class="muted-line">La reponse couvre-t-elle suffisamment le besoin ?</span>
+              <select name="rating_completeness" required>
+                <option value="">Choisir</option>
+                {% for n in range(1, 6) %}
+                  <option value="{{ n }}" {% if payload.selected_evaluation and payload.selected_evaluation.rating_completeness == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label>
+              rating_helpfulness
+              <span class="muted-line">La conversation aide-t-elle reellement a avancer ?</span>
+              <select name="rating_helpfulness" required>
+                <option value="">Choisir</option>
+                {% for n in range(1, 6) %}
+                  <option value="{{ n }}" {% if payload.selected_evaluation and payload.selected_evaluation.rating_helpfulness == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+
+          <label>
+            comment
+            <textarea name="comment" rows="4" placeholder="Commentaire libre (optionnel)">{% if payload.selected_evaluation %}{{ payload.selected_evaluation.comment }}{% endif %}</textarea>
+          </label>
+
+          <button
+            type="submit"
+            class="icon-btn icon-save"
+            title="{% if payload.selected_evaluation %}Mettre a jour evaluation{% else %}Enregistrer evaluation{% endif %}"
+            aria-label="{% if payload.selected_evaluation %}Mettre a jour evaluation{% else %}Enregistrer evaluation{% endif %}"
+          ></button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Autres sessions</h2>
+        {% if payload.sessions %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>Messages</th>
+                  <th>Dernier type</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for session in payload.sessions %}
+                  <tr class="{% if payload.selected_session_id == session.session_id %}row-selected{% endif %}">
+                    <td><code>{{ session.session_id }}</code></td>
+                    <td><strong>{{ session.message_count }}</strong></td>
+                    <td>{{ session.last_message_type }}</td>
+                    <td>
+                      <a class="ghost-link" href="{{ url_for('project_chat_session', project_slug=payload.project.slug, session_id=session.session_id) }}">Ouvrir</a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune session conversation dans cette table.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

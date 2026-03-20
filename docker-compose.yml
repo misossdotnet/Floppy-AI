@@ -1,0 +1,45 @@
+services:
+  dataswarehouse-db:
+    image: postgres:16-alpine
+    container_name: dataswarehouse-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dataswarehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_datas:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-dataswarehouse}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  dataswarehouse-app:
+    image: python:3.12-slim
+    container_name: dataswarehouse-app
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - app_datas:/app
+    environment:
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-change-this-secret}
+      POSTGRES_HOST: dataswarehouse-db
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-dataswarehouse}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    depends_on:
+      dataswarehouse-db:
+        condition: service_healthy
+    command: >
+      sh -c "pip install --no-cache-dir -r requirements.txt &&
+             gunicorn --bind 0.0.0.0:8000 app:app"
+    ports:
+      - "8000:8000"
+
+volumes:
+  postgres_datas:
+  app_datas:

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Train List | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+        {% endif %}
+      </div>
+      <h1>Train list</h1>
+      {% if payload %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Actions</h2>
+        <div class="action-row">
+          <a class="ghost-link" href="{{ url_for('project_train_new', project_slug=payload.project.slug) }}">Nouveau train-item</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Train list</h2>
+        {% if payload.train_items %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>UUID</th>
+                  <th>System</th>
+                  <th>User</th>
+                  <th>Assistant</th>
+                  <th>Metatags</th>
+                  <th>Votes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for train in payload.train_items %}
+                  <tr>
+                    <td><code>{{ train.uuid }}</code></td>
+                    <td>{{ train.system_content or '-' }}</td>
+                    <td>{{ train.user_content or '-' }}</td>
+                    <td>{{ train.assistant_content or '-' }}</td>
+                    <td>{{ train.metatags or '-' }}</td>
+                    <td><strong>{{ train.upvote }}</strong> / {{ train.downvote }}</td>
+                    <td>
+                      <div class="action-row">
+                        <form method="post" action="{{ url_for('vote_train_item', project_slug=payload.project.slug, train_uuid=train.uuid) }}" class="inline-form">
+                          <input type="hidden" name="direction" value="up">
+                          <button
+                            type="submit"
+                            class="vote-btn up icon-btn icon-up"
+                            title="Up-vote"
+                            aria-label="Up-vote"
+                          ></button>
+                        </form>
+                        <form method="post" action="{{ url_for('vote_train_item', project_slug=payload.project.slug, train_uuid=train.uuid) }}" class="inline-form">
+                          <input type="hidden" name="direction" value="down">
+                          <button
+                            type="submit"
+                            class="vote-btn down icon-btn icon-down"
+                            title="Down-vote"
+                            aria-label="Down-vote"
+                          ></button>
+                        </form>
+                        <form method="post" action="{{ url_for('remove_train_item', project_slug=payload.project.slug, train_uuid=train.uuid) }}" class="inline-form">
+                          <button
+                            type="submit"
+                            class="danger-btn icon-btn icon-delete"
+                            title="Supprimer item train"
+                            aria-label="Supprimer item train"
+                          ></button>
+                        </form>
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun item train.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>
