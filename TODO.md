@@ -1,17 +1,5 @@
 # TODO - Floppy-AI
 
-Date de review: 2026-03-20
-
-## 0) Etat actuel
-
-### Fait
-- [x] API metier de preparation de corpus
-- [x] Version MCP (JSON-RPC HTTP) sur les memes operations metier
-- [x] Endpoints metier disponibles en routes courtes + alias `/api/v1/...`
-- [x] Tables metier ajoutees: `document_processing`, `chunk_metadata`, `dataset_build`
-
-### A corriger en priorite (issues review)
-
 #### P0 - Securite / exposition
 - [ ] Ajouter authN/authZ sur toutes les routes destructives et metier (`delete`, `imports`, `build-dataset`, `approve`, `mcp`)
 - [ ] Supprimer les valeurs par defaut sensibles (`FLASK_SECRET_KEY`, `POSTGRES_PASSWORD`) en prod
