@@ -30,32 +30,6 @@ En pratique, `Floppy-AI` permet:
 - de decouper ces shards en chunks avec overlap;
 - de conserver la tracabilite et la qualite des donnees pour l'entrainement des modeles.
 
-## Fonctionnalites principales
-
-1. Creation de projet
-   - Saisie du nom dans l'interface.
-   - Transformation automatique en slug.
-   - Provisioning des tables `{slug}_shard`, `{slug}_chunk`, `{slug}_train`, `{slug}_chat` et `{slug}_chat_evaluation`.
-   - Insertion dans `public.project`.
-2. Vue projet / shards / chunks / train
-   - Affichage des shards par projet.
-   - Comptage des chunks relies via `chunk.shard_id = shard.uuid`.
-   - Visualisation detaillee des shards et des chunks (metadata + contenu complet).
-   - Saisie des exemples de conversation dans `{slug}_train`.
-3. Vue chat + evaluation
-   - Liste des conversations par `session_id` dans `{slug}_chat`.
-   - Visualisation des messages groupes par `session_id`.
-   - Formulaire d'evaluation d'une session (5 ratings + commentaire) dans `{slug}_chat_evaluation` (upsert sur `session_id`).
-4. Dashboard chat_evaluation
-   - KPI qualite (sessions evaluees, score global, moyennes par axe, taux excellentes/problematiques).
-   - Evolution hebdomadaire des scores.
-   - Relation longueur de session vs score global.
-5. Preparation dataset pour pre-training LLM
-   - Decoupage prioritaire par sections Markdown (`#`, `##`, `###`).
-   - Re-decoupage si depassement de la taille cible.
-   - Parametres de tokenisation ajustables.
-   - Metadata de contexte (`previous_document_id`, `previous_chunk_id`, `next_chunk_id`, etc.).
-
 ## Architecture technique
 
 - Backend: `Flask` (Python)
