@@ -6,7 +6,7 @@ CREATE TABLE "public"."exempleprojec_chunk" (
     "title_document" text,
     "content_document" text,
     "autor_document" text,
-    "last_date_edit" text DEFAULT now()::text NOT NULL
+    "last_date_edit" timestamptz DEFAULT now() NOT NULL
 )
 WITH (oids = false);
 
@@ -18,7 +18,7 @@ CREATE TABLE "public"."exempleproject_shard" (
     "title_document" text,
     "content_document" text,
     "autor_document" text,
-    "last_date_edit" text DEFAULT now()::text NOT NULL
+    "last_date_edit" timestamptz DEFAULT now() NOT NULL
 )
 WITH (oids = false);
 
@@ -31,7 +31,7 @@ CREATE TABLE "public"."exempleproject_train" (
     "metatags" text,
     "upvote" integer DEFAULT 0 ,
     "downvote" integer DEFAULT 0 ,
-    "last_date_edit" text DEFAULT now()::text NOT NULL
+    "last_date_edit" timestamptz DEFAULT now() NOT NULL
 )
 WITH (oids = false);
 
@@ -72,6 +72,6 @@ CREATE TABLE "public"."project" (
     "uuid" text NOT NULL,
     "project_name" text,
     "project_nameslug" text,
-    "last_date_edit" text DEFAULT now()::text NOT NULL
+    "last_date_edit" timestamptz DEFAULT now() NOT NULL
 )
 WITH (oids = false);

@@ -3,6 +3,8 @@
 > LLM Data Engineering Platform
 > Datas Warehouse - Dataset Factory
 
+Not ready for production.
+
 ## Contexte
 
 `Floppy-AI` est une application interne de type `Datas Warehouse` dediee a la gestion de donnees pour le pre-training des LLM.
