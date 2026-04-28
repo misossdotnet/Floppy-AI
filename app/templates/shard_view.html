@@ -7,15 +7,17 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Datas Warehouse</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
         {% if payload %}
           <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
           <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ shard.uuid }}">Chunk-list</a>
+          <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=payload.project.slug, document_id=shard.uuid) }}">Revue document</a>
           <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
           <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
         {% endif %}
@@ -47,6 +49,7 @@
         <h2>Details</h2>
         <div class="action-row">
           <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ shard.uuid }}">Voir les chunks</a>
+          <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=payload.project.slug, document_id=shard.uuid) }}">Ouvrir la revue</a>
           <form method="post" action="{{ url_for('remove_shard_item', project_slug=payload.project.slug, shard_uuid=shard.uuid) }}" class="inline-form">
             <button
               type="submit"

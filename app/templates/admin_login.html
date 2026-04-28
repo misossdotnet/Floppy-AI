@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Administration | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page narrow-page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('public_webchat') }}">WebChat</a>
+        <a class="ghost-link" href="{{ url_for('public_quizbot') }}">QuizBot</a>
+      </div>
+      <h1>Connexion admin</h1>
+    </section>
+
+    <section class="card">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" action="{{ url_for('admin_login') }}" class="project-form">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label for="username">Identifiant</label>
+        <input id="username" name="username" type="text" autocomplete="username" required>
+        <label for="password">Mot de passe</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit" class="icon-btn icon-run" title="Se connecter" aria-label="Se connecter"></button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

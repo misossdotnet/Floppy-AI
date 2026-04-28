@@ -7,12 +7,13 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Datas Warehouse</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('home') }}">Home</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
         {% if payload %}
           <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
           <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>

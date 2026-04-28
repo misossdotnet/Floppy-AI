@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Session QuizBot</h1>
+      {% if payload %}
+        <p class="lead"><code>{{ payload.session_id }}</code></p>
+      {% endif %}
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Resume</h2>
+        <div class="details-grid">
+          <p><strong>Status:</strong> {{ payload.status }}</p>
+          <p><strong>Sujet:</strong> {{ payload.topic_label or '-' }}</p>
+          <p><strong>Resultat:</strong>
+            {% if payload.is_correct is sameas true %}Correct{% elif payload.is_correct is sameas false %}Incorrect{% else %}-{% endif %}
+          </p>
+          <p><strong>Avis:</strong> {{ payload.rating or '-' }}</p>
+          <p><strong>Duree LLM:</strong> {{ payload.llm_duration_ms }} ms</p>
+          <p><strong>Creation:</strong> {{ payload.created_at }}</p>
+          <p><strong>Fin:</strong> {{ payload.completed_at or '-' }}</p>
+        </div>
+        {% if payload.error_message %}
+          <div class="alert error">{{ payload.error_message }}</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Question</h2>
+        <pre class="document-content">{{ payload.question_text }}</pre>
+        <h3>Reponse utilisateur</h3>
+        <pre class="document-content">{{ payload.user_answer or '-' }}</pre>
+      </section>
+
+      <section class="card">
+        <h2>Correction LLM</h2>
+        <pre class="document-content">{{ payload.correction_json }}</pre>
+        <div class="details-grid">
+          <p><strong>Modele question:</strong> {{ payload.question_model or '-' }}</p>
+          <p><strong>Modele correction:</strong> {{ payload.correction_model or '-' }}</p>
+          <p><strong>Audit question:</strong>
+            {% if payload.generation_audit_session_id %}
+              <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=payload.generation_audit_session_id) }}">{{ payload.generation_audit_session_id }}</a>
+            {% else %}
+              -
+            {% endif %}
+          </p>
+          <p><strong>Audit correction:</strong>
+            {% if payload.correction_audit_session_id %}
+              <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=payload.correction_audit_session_id) }}">{{ payload.correction_audit_session_id }}</a>
+            {% else %}
+              -
+            {% endif %}
+          </p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Avis utilisateur</h2>
+        <p><strong>Note:</strong> {{ payload.rating or '-' }}</p>
+        <pre class="document-content">{{ payload.comment or '-' }}</pre>
+      </section>
+
+      <section class="card">
+        <h2>Journal QuizBot</h2>
+        {% if payload.audit_events %}
+          {% for event in payload.audit_events %}
+            <div class="chat-message">
+              <div class="chat-message-head">
+                <span class="chat-type">{{ event.event_type }}</span>
+                <span class="chat-id">{{ event.actor }} | {{ event.created_at }}</span>
+              </div>
+              <pre>{{ event.details_json }}</pre>
+            </div>
+          {% endfor %}
+        {% else %}
+          <p class="empty">Aucun evenement.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

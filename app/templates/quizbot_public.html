@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page quizbot-page">
+    <section class="hero quizbot-hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">QuizBot</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('public_webchat') }}">WebChat</a>
+      </div>
+      <h1>QuizBot</h1>
+      <p class="lead">Une question, une reponse, une correction LLM.</p>
+    </section>
+
+    <section class="card quizbot-shell" aria-live="polite">
+      <div class="quizbot-topline">
+        <span id="quizbotTopic" class="stat-chip">Sujet aleatoire</span>
+        <span id="quizbotProgress" class="stat-chip">0 / 1</span>
+        <span id="quizbotScore" class="stat-chip">Score 0</span>
+      </div>
+
+      <div class="quizbot-progress" aria-hidden="true">
+        <span id="quizbotProgressFill"></span>
+      </div>
+
+      <div id="quizbotStartPanel" class="quizbot-panel active">
+        <button id="quizbotStart" type="button" class="quizbot-start-button">Demarrer un quiz</button>
+        <p id="quizbotStartStatus" class="muted-line"></p>
+      </div>
+
+      <div id="quizbotQuestionPanel" class="quizbot-panel" hidden>
+        <p id="quizbotBadge" class="chat-type">Question</p>
+        <h2 id="quizbotQuestion"></h2>
+        <p id="quizbotHint" class="muted-line"></p>
+        <form id="quizbotAnswerForm" class="train-form">
+          <label for="quizbotAnswer" class="sr-only">Votre reponse</label>
+          <textarea id="quizbotAnswer" rows="4" placeholder="Votre reponse..." required></textarea>
+          <button id="quizbotAnswerButton" type="submit" class="icon-btn icon-run" title="Valider" aria-label="Valider"></button>
+        </form>
+        <p id="quizbotAnswerStatus" class="muted-line"></p>
+      </div>
+
+      <div id="quizbotResultPanel" class="quizbot-panel" hidden>
+        <div id="quizbotResultState" class="quizbot-result-state"></div>
+        <div class="details-grid">
+          <p><strong>Explication:</strong> <span id="quizbotExplanation"></span></p>
+          <p><strong>Correction attendue:</strong> <span id="quizbotExpected"></span></p>
+          <p><strong>Conseil:</strong> <span id="quizbotTip"></span></p>
+        </div>
+        <form id="quizbotFeedbackForm" class="quizbot-feedback-form">
+          <div class="quizbot-rating-row">
+            <button type="button" class="ghost-button" data-rating="good">Bien</button>
+            <button type="button" class="ghost-button" data-rating="neutral">Neutre</button>
+            <button type="button" class="ghost-button" data-rating="bad">Pas bien</button>
+          </div>
+          <label for="quizbotComment" class="sr-only">Commentaire</label>
+          <textarea id="quizbotComment" rows="3" placeholder="Commentaire optionnel"></textarea>
+          <button id="quizbotFeedbackButton" type="submit" class="icon-btn icon-save" title="Envoyer l'avis" aria-label="Envoyer l'avis"></button>
+        </form>
+        <p id="quizbotFeedbackStatus" class="muted-line"></p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const startButton = document.getElementById("quizbotStart");
+    const startStatus = document.getElementById("quizbotStartStatus");
+    const startPanel = document.getElementById("quizbotStartPanel");
+    const questionPanel = document.getElementById("quizbotQuestionPanel");
+    const resultPanel = document.getElementById("quizbotResultPanel");
+    const topicNode = document.getElementById("quizbotTopic");
+    const progressNode = document.getElementById("quizbotProgress");
+    const progressFill = document.getElementById("quizbotProgressFill");
+    const scoreNode = document.getElementById("quizbotScore");
+    const badgeNode = document.getElementById("quizbotBadge");
+    const questionNode = document.getElementById("quizbotQuestion");
+    const hintNode = document.getElementById("quizbotHint");
+    const answerForm = document.getElementById("quizbotAnswerForm");
+    const answerInput = document.getElementById("quizbotAnswer");
+    const answerButton = document.getElementById("quizbotAnswerButton");
+    const answerStatus = document.getElementById("quizbotAnswerStatus");
+    const resultState = document.getElementById("quizbotResultState");
+    const explanationNode = document.getElementById("quizbotExplanation");
+    const expectedNode = document.getElementById("quizbotExpected");
+    const tipNode = document.getElementById("quizbotTip");
+    const feedbackForm = document.getElementById("quizbotFeedbackForm");
+    const feedbackStatus = document.getElementById("quizbotFeedbackStatus");
+    const feedbackButton = document.getElementById("quizbotFeedbackButton");
+    const commentInput = document.getElementById("quizbotComment");
+    const ratingButtons = Array.from(document.querySelectorAll("[data-rating]"));
+    let sessionId = "";
+    let selectedRating = "good";
+
+    function showPanel(panel) {
+      [startPanel, questionPanel, resultPanel].forEach((item) => {
+        item.hidden = item !== panel;
+        item.classList.toggle("active", item === panel);
+      });
+    }
+
+    function setProgress(current, total) {
+      progressNode.textContent = `${current} / ${total}`;
+      const pct = total ? Math.min(100, Math.round((current / total) * 100)) : 0;
+      progressFill.style.width = `${pct}%`;
+    }
+
+    function setLoading(node, message, isError = false) {
+      node.textContent = message;
+      node.classList.toggle("status-error", isError);
+    }
+
+    function setRating(value) {
+      selectedRating = value;
+      ratingButtons.forEach((button) => {
+        button.classList.toggle("selected", button.dataset.rating === value);
+      });
+    }
+
+    async function postJson(url, payload = {}) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error?.message || "Action QuizBot impossible.");
+      }
+      return data;
+    }
+
+    startButton.addEventListener("click", async () => {
+      startButton.disabled = true;
+      startPanel.classList.add("is-loading");
+      setLoading(startStatus, "Generation de la question...");
+      try {
+        const data = await postJson("{{ url_for('public_quizbot_start') }}");
+        sessionId = data.session_id;
+        topicNode.textContent = `${data.topic.label} - ${data.topic.level || "general"}`;
+        scoreNode.textContent = "Score 0";
+        setProgress(data.progress.current, data.progress.total);
+        badgeNode.textContent = data.badge || "Question";
+        questionNode.textContent = data.question;
+        hintNode.textContent = data.hint ? `Indice: ${data.hint}` : "";
+        answerInput.value = "";
+        setLoading(answerStatus, "");
+        showPanel(questionPanel);
+        answerInput.focus();
+      } catch (error) {
+        setLoading(startStatus, error.message, true);
+      } finally {
+        startButton.disabled = false;
+        startPanel.classList.remove("is-loading");
+      }
+    });
+
+    answerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const answer = answerInput.value.trim();
+      if (!answer) return;
+      answerButton.disabled = true;
+      setLoading(answerStatus, "Correction en cours...");
+      try {
+        const data = await postJson("{{ url_for('public_quizbot_answer') }}", {
+          session_id: sessionId,
+          answer,
+        });
+        resultState.className = `quizbot-result-state ${data.is_correct ? "correct" : "incorrect"}`;
+        resultState.textContent = data.is_correct ? "Reponse correcte" : "Reponse incorrecte";
+        explanationNode.textContent = data.explanation || "-";
+        expectedNode.textContent = data.expected_answer || "-";
+        tipNode.textContent = data.learning_tip || "-";
+        scoreNode.textContent = `Score ${data.score}`;
+        setProgress(data.progress.current, data.progress.total);
+        setRating("good");
+        setLoading(feedbackStatus, "");
+        showPanel(resultPanel);
+      } catch (error) {
+        setLoading(answerStatus, error.message, true);
+      } finally {
+        answerButton.disabled = false;
+      }
+    });
+
+    ratingButtons.forEach((button) => {
+      button.addEventListener("click", () => setRating(button.dataset.rating));
+    });
+
+    feedbackForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      feedbackButton.disabled = true;
+      setLoading(feedbackStatus, "Enregistrement de l'avis...");
+      try {
+        await postJson("{{ url_for('public_quizbot_feedback') }}", {
+          session_id: sessionId,
+          rating: selectedRating,
+          comment: commentInput.value.trim(),
+        });
+        setLoading(feedbackStatus, "Session terminee.");
+        feedbackForm.querySelectorAll("button, textarea").forEach((node) => {
+          node.disabled = true;
+        });
+      } catch (error) {
+        setLoading(feedbackStatus, error.message, true);
+        feedbackButton.disabled = false;
+      }
+    });
+
+    setProgress(0, 1);
+    setRating("good");
+  </script>
+</body>
+</html>

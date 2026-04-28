@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -7,124 +7,112 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Datas Warehouse</p>
-      <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('projects_tree') }}">Tree view globale</a>
-      </div>
-      <h1>Home - Project list</h1>
+      {% if admin_authenticated %}
+        <div class="views-nav">
+          <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Administration</a>
+          <a class="ghost-link" href="{{ url_for('health') }}">Healthcheck</a>
+        </div>
+      {% endif %}
+      <h1>Plateforme LLM Data Engineering</h1>
       <p class="lead">
-        Floppy-AI sert a gerer la donnee pour le pre-training des LLM: projets, shards, chunks, conversations et evaluation.
+        Espace public de Floppy-AI: statut du moteur LLM et catalogue des modules disponibles pour interagir avec les modeles.
       </p>
     </section>
 
-    <section class="card">
-      <h2>Project - Add</h2>
-      <form method="post" action="{{ url_for('add_project') }}" class="project-form">
-        <label for="project_name">Nom du projet</label>
-        <input
-          id="project_name"
-          name="project_name"
-          type="text"
-          placeholder="Ex: ExempleProjet Datas"
-          required
-          autocomplete="off"
-        >
-        <p class="slug-preview">
-          Slug detecte: <code id="slugPreview">exempleprojet_datas</code>
-        </p>
-        <button
-          type="submit"
-          class="icon-btn icon-add"
-          title="Ajouter projet"
-          aria-label="Ajouter projet"
-        ></button>
-      </form>
+    {% if status_error %}
+      <section class="card">
+        <div class="alert error">{{ status_error }}</div>
+      </section>
+    {% endif %}
 
-      {% if db_error %}
-        <div class="alert error">
-          Connexion PostgreSQL impossible: {{ db_error }}
-        </div>
-      {% endif %}
-
-      {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
           {% for category, message in messages %}
             <div class="alert {{ category }}">{{ message }}</div>
           {% endfor %}
-        {% endif %}
-      {% endwith %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    <section class="card">
+      <div class="project-head">
+        <h2>Status LLM</h2>
+        <span class="stat-chip {% if llm_status.connected %}status-connected{% else %}status-disconnected{% endif %}">
+          {{ llm_status.status_label }}
+        </span>
+      </div>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Provider</p>
+          <p class="kpi-value">{{ llm_status.provider or '-' }}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Modele</p>
+          <p class="kpi-value">{{ llm_status.model or '-' }}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Source config</p>
+          <p class="kpi-value">{{ llm_status.source or '-' }}</p>
+        </article>
+      </div>
+      {% if llm_status.error %}
+        <div class="alert error">{{ llm_status.error }}</div>
+      {% endif %}
+      {% if llm_status.db_error %}
+        <p class="muted-line">Configuration persistante indisponible: {{ llm_status.db_error }}</p>
+      {% endif %}
     </section>
 
     <section class="card">
-      <h2>Project list</h2>
-      {% if projects %}
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Nom</th>
-                <th>Slug</th>
-                <th>UUID</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for project in projects %}
-                <tr>
-                  <td>{{ project.name }}</td>
-                  <td><code>{{ project.slug }}</code></td>
-                  <td><code>{{ project.uuid }}</code></td>
-                  <td>
-                    <div class="action-row">
-                      <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard-list</a>
-                      <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=project.slug) }}">Train-list</a>
-                      <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk-list</a>
-                      <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Chat-list</a>
-                      <form method="post" action="{{ url_for('remove_project', project_slug=project.slug) }}" class="inline-form">
-                        <button
-                          type="submit"
-                          class="danger-btn icon-btn icon-delete"
-                          title="Supprimer projet"
-                          aria-label="Supprimer projet"
-                        ></button>
-                      </form>
-                    </div>
-                  </td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <p class="empty">Aucun projet pour le moment.</p>
+      <h2>Modules publics</h2>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Webchat</p>
+          {% if webchat_status.available %}
+            <p class="kpi-value">Disponible</p>
+            <a class="ghost-link" href="{{ url_for('public_webchat') }}">Ouvrir le webchat</a>
+          {% elif not webchat_status.enabled %}
+            <p class="kpi-value">Desactive</p>
+            <p class="muted-line">Le module est bloque par l'administration.</p>
+          {% elif not webchat_status.llm_connected %}
+            <p class="kpi-value">Indisponible</p>
+            <p class="muted-line">Le moteur LLM doit etre connecte.</p>
+          {% else %}
+            <p class="kpi-value">Indisponible</p>
+          {% endif %}
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">QuizBot</p>
+          {% if quizbot_status.available %}
+            <p class="kpi-value">Disponible</p>
+            <a class="ghost-link" href="{{ url_for('public_quizbot') }}">Demarrer un quiz</a>
+          {% elif not quizbot_status.enabled %}
+            <p class="kpi-value">Desactive</p>
+            <p class="muted-line">Le module est bloque par l'administration.</p>
+          {% elif not quizbot_status.configured %}
+            <p class="kpi-value">A configurer</p>
+            <p class="muted-line">Configuration QuizBot incomplete.</p>
+          {% elif quizbot_status.active_topic_count <= 0 %}
+            <p class="kpi-value">Sans sujet</p>
+            <p class="muted-line">Aucun sujet actif.</p>
+          {% else %}
+            <p class="kpi-value">Indisponible</p>
+          {% endif %}
+        </article>
+      </div>
+      {% if webchat_status.db_error %}
+        <div class="alert error">Webchat: {{ webchat_status.db_error }}</div>
+      {% endif %}
+      {% if quizbot_status.db_error %}
+        <div class="alert error">QuizBot temporairement indisponible.</div>
       {% endif %}
     </section>
   </main>
-
-  <script>
-    const projectNameInput = document.getElementById("project_name");
-    const slugPreview = document.getElementById("slugPreview");
-
-    function toSlug(value) {
-      const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
-      let slug = normalized
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "")
-        .slice(0, 50);
-
-      if (!slug) return "slug_invalide";
-      if (/^\d/.test(slug)) slug = "p_" + slug;
-      return slug;
-    }
-
-    projectNameInput.addEventListener("input", (event) => {
-      slugPreview.textContent = toSlug(event.target.value);
-    });
-  </script>
 </body>
 </html>
-

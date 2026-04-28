@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_topics') }}">Sujets</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_config') }}">Configuration QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_audit') }}">Audit QuizBot</a>
+      </div>
+      <h1>QuizBot</h1>
+      <p class="lead">Pilotage du quiz public, des sujets et des corrections LLM.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if stats %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Public</p>
+            <p class="kpi-value">{% if status.available %}Disponible{% elif status.enabled %}Incomplet{% else %}Bloque{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Sujets actifs</p>
+            <p class="kpi-value">{{ stats.active_topic_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Provider</p>
+            <p class="kpi-value">{{ status.provider or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele question</p>
+            <p class="kpi-value">{{ status.question_model or '-' }}</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Synthese sessions</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Sessions totales</p>
+            <p class="kpi-value">{{ stats.total_sessions }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Taux de reussite</p>
+            <p class="kpi-value">{{ stats.success_rate }}%</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Erreurs LLM</p>
+            <p class="kpi-value">{{ stats.llm_error_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Temps LLM moyen</p>
+            <p class="kpi-value">{{ stats.avg_llm_response_ms }} ms</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Avis utilisateur</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Bien</p>
+            <p class="kpi-value">{{ stats.rating_counts.good }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Neutre</p>
+            <p class="kpi-value">{{ stats.rating_counts.neutral }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Pas bien</p>
+            <p class="kpi-value">{{ stats.rating_counts.bad }}</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Sujets joues</h2>
+        <div class="details-grid">
+          <div>
+            <h3>Plus joues</h3>
+            {% if stats.most_played_topics %}
+              <ul class="plain-list">
+                {% for topic in stats.most_played_topics %}
+                  <li>{{ topic.label }}: {{ topic.count }}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="empty">Aucune session.</p>
+            {% endif %}
+          </div>
+          <div>
+            <h3>Moins joues</h3>
+            {% if stats.least_played_topics %}
+              <ul class="plain-list">
+                {% for topic in stats.least_played_topics %}
+                  <li>{{ topic.label }}: {{ topic.count }}</li>
+                {% endfor %}
+              </ul>
+            {% else %}
+              <p class="empty">Aucune session.</p>
+            {% endif %}
+          </div>
+        </div>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

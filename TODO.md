@@ -1,22 +1,42 @@
 # TODO - Floppy-AI
 
-#### P0 - Securite / exposition
-- [ ] Ajouter authN/authZ sur toutes les routes destructives et metier (`delete`, `imports`, `build-dataset`, `approve`, `mcp`)
-- [ ] Supprimer les valeurs par defaut sensibles (`FLASK_SECRET_KEY`, `POSTGRES_PASSWORD`) en prod
-- [ ] Desactiver `debug=True` hors environnement local
-- [ ] Ne plus retourner `str(exc)` brut en API/UI (introduire erreurs normalisees + logs serveur)
+## P0 - Securite / exposition
+
+- [x] Supprimer les valeurs par defaut sensibles (`FLASK_SECRET_KEY`, `POSTGRES_PASSWORD`) hors environnement local.
+- [x] Desactiver `debug=True` hors environnement local.
+- [x] Ne plus retourner `str(exc)` brut en API/UI: erreurs publiques normalisees + logs serveur.
+- [x] Ajouter authN/authZ sur routes destructives et metier (`delete`, `imports`, `build-dataset`, `approve`, `mcp`).
+- [x] Proteger les endpoints API de lecture sensible (`GET /chunks`, `/documents/<id>/lineage`, `/dataset-builds/<id>`) avec auth + scopes.
+- [x] Interdire l'usage de token via query/form (`api_token`) et accepter uniquement les headers (`Authorization`, `X-Floppy-Token`, `X-Api-Token`).
+- [x] Systeme de connexion UI par session admin.
+- [ ] Roles UI fins au-dela du role admin unique.
+- [ ] JWT signe pour API avec expiration + rotation/revocation.
+- [ ] Rate limiting sur endpoints API/MCP et endpoints publics WebChat/QuizBot.
+- [ ] Politique CORS explicite: origines, methodes, headers autorises.
+- [ ] Audit transversal des actions sensibles metier (`delete`, `approve`, `build`) hors audit LLM/QuizBot.
 
 #### P1 - Integrite donnees / fiabilite
-- [ ] Corriger les colonnes `last_date_edit` (actuellement `text DEFAULT 'now()'`) vers `timestamptz DEFAULT now()`
-- [ ] Ajouter des contraintes FK (au minimum logique) entre `project`, `shard`, `chunk`, `train`
-- [ ] Ajouter des index metier sur filtres frequents (`project_slug`, `quality_score`, `approval_status`, `shard_id`)
-- [ ] Introduire une vraie strategie de migrations SQL versionnees (Alembic ou equivalent)
+
+- [x] Corriger les colonnes `last_date_edit` vers `timestamptz DEFAULT now()`.
+- [x] Ajouter des contraintes FK logiques entre `project`, `shard`, `chunk`, `train`.
+- [x] Ajouter des index metier sur filtres frequents (`project_slug`, `quality_score`, `approval_status`, `shard_id`).
+- [x] Introduire une strategie de migrations SQL versionnees avec runner + checksums.
+- [ ] Extraire le schema runtime `ensure_*` vers de vrais fichiers SQL dans `app/migrations/`.
+- [ ] Ajouter un controle de migration dans le demarrage Docker/CI.
+- [x] Eviter le scan de tous les projets en priorisant `document_registry` pour retrouver un document.
+- [x] Eviter la creation implicite de tables sur certains chemins de lecture metier.
+- [x] Centraliser la validation des payloads REST + MCP.
+- [x] Ajouter des docstrings sur les fonctions/services critiques.
+- [ ] Supprimer les imports wildcard (`from services import *`) au profit d'imports explicites.
+
 
 #### P2 - Performance / maintenabilite
-- [ ] Eviter le scan de tous les projets pour retrouver un document (`find_document_record`)
-- [ ] Eviter la creation implicite de tables en chemins de lecture quand non necessaire
-- [ ] Centraliser la validation des payloads (schemas) pour REST + MCP
-- [ ] Structurer `app.py` en modules (`db`, `services`, `api_rest`, `api_mcp`, `ui`)
+- [x] Eviter le scan de tous les projets pour retrouver un document (`find_document_record`)
+- [x] Eviter la creation implicite de tables en chemins de lecture quand non necessaire
+- [x] Centraliser la validation des payloads (schemas) pour REST + MCP
+- [x] Structurer `app.py` en modules (`db`, `services`, `api_rest`, `api_mcp`, `ui`)
+- [ ] Supprimer les imports wildcard (`from services import *`) au profit d'imports explicites
+- [x] Ajouter des docstrings sur les fonctions/services critiques (auditabilite + maintenabilite)
 
 ## 1) Securite et acces
 - [ ] Systeme de connexion UI (session + roles)
@@ -120,7 +140,7 @@
 
 ## 9) Definition of Done (DoD)
 - [ ] Aucune route metier sensible sans auth
-- [ ] Aucun secret de dev par defaut en prod
-- [ ] Migrations DB versionnees et rejouables
+- [x] Aucun secret de dev par defaut en prod
+- [x] Migrations DB versionnees et rejouables
 - [ ] Couverture de tests minimale: 70% sur services metier critiques
 - [ ] Docs README synchronisees avec les endpoints reels

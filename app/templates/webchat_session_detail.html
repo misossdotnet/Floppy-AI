@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session webchat | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_webchat_sessions') }}">Sessions webchat</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Configuration webchat</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Session webchat</h1>
+      {% if payload %}
+        <p class="lead"><code>{{ payload.session_id }}</code></p>
+      {% endif %}
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Resume</h2>
+        <div class="details-grid">
+          <p><strong>Status:</strong> {{ payload.status }}</p>
+          <p><strong>Creation:</strong> {{ payload.created_at }}</p>
+          <p><strong>Mise a jour:</strong> {{ payload.updated_at }}</p>
+          <p><strong>IP:</strong> {{ payload.ip_address or '-' }}</p>
+        </div>
+      </section>
+
+      {% for message in payload.messages %}
+        <section class="card">
+          <h2>{{ message.role }} | {{ message.created_at }}</h2>
+          <pre class="document-content">{{ message.content }}</pre>
+          {% if message.raw_content and message.raw_content != message.content %}
+            <h3>Contenu brut</h3>
+            <pre class="document-content">{{ message.raw_content }}</pre>
+          {% endif %}
+          <h3>Pipeline trace</h3>
+          <pre class="document-content">{{ message.pipeline_trace_json }}</pre>
+          <h3>Metadata</h3>
+          <pre class="document-content">{{ message.metadata_json }}</pre>
+        </section>
+      {% endfor %}
+    {% endif %}
+  </main>
+</body>
+</html>

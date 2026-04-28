@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session LLM | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+      </div>
+      <h1>Session LLM</h1>
+      {% if payload %}
+        <p class="lead"><code>{{ payload.session_id }}</code></p>
+      {% endif %}
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Resume</h2>
+        <div class="details-grid">
+          <p><strong>Usage:</strong> {{ payload.purpose }}</p>
+          <p><strong>Configuration:</strong> {{ payload.config_name or payload.config_id or '-' }}</p>
+          <p><strong>Provider:</strong> {{ payload.provider }}</p>
+          <p><strong>Modele:</strong> {{ payload.model }}</p>
+          <p><strong>Status:</strong> {{ payload.status }}</p>
+          <p><strong>Debut:</strong> {{ payload.started_at }}</p>
+          <p><strong>Fin:</strong> {{ payload.ended_at or '-' }}</p>
+        </div>
+        {% if payload.error_message %}
+          <div class="alert error">{{ payload.error_message }}</div>
+        {% endif %}
+        <h3>Metadata</h3>
+        <pre class="document-content">{{ payload.metadata_json }}</pre>
+      </section>
+
+      {% for exchange in payload.exchanges %}
+        <section class="card">
+          <h2>Echange #{{ exchange.sequence_no }}</h2>
+          <p class="muted-line">{{ exchange.created_at }} | <code>{{ exchange.exchange_id }}</code></p>
+          {% if exchange.error_message %}
+            <div class="alert error">{{ exchange.error_message }}</div>
+          {% endif %}
+          <h3>Requete</h3>
+          <pre class="document-content">{{ exchange.request_json }}</pre>
+          <h3>Reponse</h3>
+          <pre class="document-content">{{ exchange.response_json }}</pre>
+        </section>
+      {% endfor %}
+    {% endif %}
+  </main>
+</body>
+</html>

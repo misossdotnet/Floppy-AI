@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FAQ Modules | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">FAQ</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+      </div>
+      <h1>FAQ des modules</h1>
+      <p class="lead">
+        Vue rapide des espaces fonctionnels: preparation de donnees, entrainement,
+        evaluation de conversations et tests de comportement LLM.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>RAG: Shard / Chunk</h2>
+        <span class="stat-chip">Preparation de donnees</span>
+      </div>
+      <p class="lead">
+        Le module RAG sert a transformer des documents sources en donnees
+        exploitables par une chaine de retrieval. Les shards representent les
+        blocs documentaires ou sections de reference; les chunks sont les
+        segments normalises, tailles et enrichis avec leurs metadonnees.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Construire un corpus propre, tracable et pret pour la recherche contextuelle.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Importer, decouper, verifier la qualite et conserver la lineage des contenus.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>RLHF: Train</h2>
+        <span class="stat-chip">Donnees d'entrainement</span>
+      </div>
+      <p class="lead">
+        Le module Train centralise les exemples destines a l'entrainement ou au
+        renforcement. Il permet de preparer des paires instruction/reponse, de
+        voter ou qualifier des items, puis de constituer des jeux de donnees
+        reutilisables.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Produire des exemples de qualite pour ameliorer les reponses d'un modele.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Collecter, filtrer et approuver les donnees utiles aux cycles RLHF ou fine-tuning.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>Chat</h2>
+        <span class="stat-chip">Evaluation de conversations</span>
+      </div>
+      <p class="lead">
+        Le module Chat sert a integrer les donnees issues d'une solution de
+        chat externe. Les conversations sont regroupees par session, puis
+        analysees pour evaluer la pertinence, la clarte, l'exactitude, la
+        completude et l'utilite des reponses.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Mesurer la qualite reelle des conversations deja produites.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Importer des sessions, consulter les echanges et enregistrer des evaluations.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>WebChat et QuizBot</h2>
+        <span class="stat-chip">Tests comportementaux</span>
+      </div>
+      <p class="lead">
+        WebChat et QuizBot permettent de realiser des tests controles avec les
+        configurations LLM enregistrees. Les sessions servent a observer le
+        comportement du modele, les erreurs, les hallucinations possibles et la
+        stabilite des reponses selon les prompts et les parametres.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">WebChat</p>
+          <p>Tester une conversation libre, inspecter les messages et analyser les traces de pipeline.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">QuizBot</p>
+          <p>Tester generation, correction, scoring et feedback utilisateur sur des sujets controles.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

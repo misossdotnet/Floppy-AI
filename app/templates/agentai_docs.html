@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AgentAI Docs | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>AgentAI Docs</h1>
+      <p class="lead">
+        Generation du contenu Markdown de <code>docs/agentai/</code> a partir d'un formulaire metier et d'un LLM configure.
+      </p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Configuration</h2>
+        {% if payload.llm_configured %}
+          <div class="alert success">
+            LLM pret: <code>{{ payload.llm_provider }}</code> / <code>{{ payload.llm_model }}</code>
+          </div>
+        {% else %}
+          <div class="alert error">
+            Configurez le moteur dans <code>Configuration LLM</code> ou via les variables <code>LLM_*</code> avant de generer.
+          </div>
+        {% endif %}
+        <p class="muted-line">
+          Endpoint: <code>{{ payload.llm_api_url or "non configure" }}</code> | Source: <code>{{ payload.llm_source or "-" }}</code>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Formulaire de generation</h2>
+        <form id="agentaiDocsForm" class="agentai-form">
+          <label class="full-span" for="target_files">
+            Fichiers Markdown cibles
+            <textarea
+              id="target_files"
+              name="target_files"
+              rows="5"
+              placeholder="Ex: fr/AGENTS.md&#10;en/AGENTS.md"
+              required
+            >{{ payload.markdown_files | join('\n') }}</textarea>
+          </label>
+
+          {% if not payload.markdown_files %}
+            <div class="alert error full-span">
+              Aucun fichier <code>.md</code> detecte dans <code>docs/agentai/</code>. Ajoutez les noms de fichiers a generer dans le champ ci-dessus.
+            </div>
+          {% endif %}
+
+          <div class="agentai-question-grid full-span">
+            {% for question in payload.questions %}
+              <label for="{{ question.name }}">
+                {{ loop.index }}. {{ question.label }}
+                <textarea
+                  id="{{ question.name }}"
+                  name="{{ question.name }}"
+                  rows="{{ question.rows }}"
+                  data-question="true"
+                  placeholder="{{ question.placeholder }}"
+                ></textarea>
+              </label>
+            {% endfor %}
+          </div>
+
+          <div class="agentai-actions full-span">
+            <button
+              id="generateDocsBtn"
+              type="submit"
+              class="icon-btn icon-run"
+              title="Generer les documents"
+              aria-label="Generer les documents"
+            ></button>
+            <span id="agentaiStatus" class="muted-line"></span>
+          </div>
+        </form>
+      </section>
+    {% endif %}
+  </main>
+
+  <div id="agentaiModal" class="modal-backdrop" hidden>
+    <section class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="agentaiModalTitle">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Preview</p>
+          <h2 id="agentaiModalTitle">Documents generes</h2>
+        </div>
+        <button
+          id="closeAgentaiModal"
+          type="button"
+          class="icon-btn icon-delete danger-btn"
+          title="Fermer"
+          aria-label="Fermer"
+        ></button>
+      </div>
+
+      <label for="generatedFileSelect">
+        Fichier
+        <select id="generatedFileSelect"></select>
+      </label>
+
+      <label for="generatedDocPreview">
+        Contenu Markdown
+        <textarea id="generatedDocPreview" rows="20" spellcheck="false"></textarea>
+      </label>
+
+      <div class="modal-actions">
+        <button
+          id="saveGeneratedDocs"
+          type="button"
+          class="icon-btn icon-save"
+          title="Enregistrer dans docs/agentai"
+          aria-label="Enregistrer dans docs/agentai"
+        ></button>
+        <span id="agentaiModalStatus" class="muted-line"></span>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const form = document.getElementById("agentaiDocsForm");
+    const statusNode = document.getElementById("agentaiStatus");
+    const generateButton = document.getElementById("generateDocsBtn");
+    const modal = document.getElementById("agentaiModal");
+    const modalStatus = document.getElementById("agentaiModalStatus");
+    const closeModalButton = document.getElementById("closeAgentaiModal");
+    const fileSelect = document.getElementById("generatedFileSelect");
+    const preview = document.getElementById("generatedDocPreview");
+    const saveButton = document.getElementById("saveGeneratedDocs");
+
+    let generatedDocuments = {};
+    let currentFile = "";
+
+    function setStatus(node, message, isError = false) {
+      node.textContent = message;
+      node.classList.toggle("status-error", isError);
+    }
+
+    function collectPayload() {
+      const answers = {};
+      document.querySelectorAll("[data-question]").forEach((field) => {
+        answers[field.name] = field.value.trim();
+      });
+      return {
+        target_files: document.getElementById("target_files").value,
+        answers,
+      };
+    }
+
+    async function postJson(url, payload) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        const message = data.error?.message || data.message || "Operation impossible.";
+        throw new Error(message);
+      }
+      return data;
+    }
+
+    function syncCurrentEdit() {
+      if (currentFile) {
+        generatedDocuments[currentFile] = preview.value;
+      }
+    }
+
+    function renderSelectedFile(filename) {
+      currentFile = filename;
+      preview.value = generatedDocuments[filename] || "";
+      modalStatus.textContent = "";
+    }
+
+    function openPreviewModal(documents) {
+      generatedDocuments = { ...documents };
+      fileSelect.innerHTML = "";
+      Object.keys(generatedDocuments).forEach((filename) => {
+        const option = document.createElement("option");
+        option.value = filename;
+        option.textContent = filename;
+        fileSelect.appendChild(option);
+      });
+      renderSelectedFile(fileSelect.value);
+      modal.hidden = false;
+      preview.focus();
+    }
+
+    function closePreviewModal() {
+      modal.hidden = true;
+    }
+
+    if (form) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        generateButton.disabled = true;
+        setStatus(statusNode, "Generation en cours...");
+        try {
+          const data = await postJson("{{ url_for('generate_agentai_docs') }}", collectPayload());
+          openPreviewModal(data.documents);
+          setStatus(statusNode, "Generation terminee.");
+        } catch (error) {
+          setStatus(statusNode, error.message, true);
+        } finally {
+          generateButton.disabled = false;
+        }
+      });
+    }
+
+    fileSelect.addEventListener("change", () => {
+      syncCurrentEdit();
+      renderSelectedFile(fileSelect.value);
+    });
+
+    closeModalButton.addEventListener("click", closePreviewModal);
+
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) {
+        closePreviewModal();
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !modal.hidden) {
+        closePreviewModal();
+      }
+    });
+
+    saveButton.addEventListener("click", async () => {
+      syncCurrentEdit();
+      saveButton.disabled = true;
+      setStatus(modalStatus, "Enregistrement...");
+      try {
+        const data = await postJson("{{ url_for('save_agentai_docs') }}", {
+          documents: generatedDocuments,
+        });
+        setStatus(modalStatus, `Enregistre: ${data.saved_files.join(", ")}`);
+      } catch (error) {
+        setStatus(modalStatus, error.message, true);
+      } finally {
+        saveButton.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

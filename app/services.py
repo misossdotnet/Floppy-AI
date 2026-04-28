@@ -5,13 +5,14 @@ import re
 import unicodedata
 import json
 import hashlib
+import hmac
 import logging
 import math
 from datetime import datetime, timezone
 from functools import wraps
 from uuid import uuid4
 
-from flask import Flask, flash, redirect, render_template, request, url_for
+from flask import Flask, flash, redirect, render_template, request, session, url_for
 from psycopg2.extras import Json
 from psycopg2 import sql
 from db import get_db_connection
@@ -21,6 +22,8 @@ DOCUMENT_PROCESSING_TABLE = "document_processing"
 CHUNK_METADATA_TABLE = "chunk_metadata"
 DATASET_BUILD_TABLE = "dataset_build"
 DOCUMENT_REGISTRY_TABLE = "document_registry"
+DOCUMENT_REVIEW_ANNOTATION_TABLE = "document_review_annotation"
+DOCUMENT_SECTION_EXCLUSION_TABLE = "document_section_exclusion"
 DEFAULT_NORMALIZATION_VERSION = "v1"
 LOCAL_ENV_NAMES = {"local", "dev", "development", "test"}
 APP_ENV = (os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "development").strip().lower()
@@ -125,6 +128,12 @@ MCP_TOOL_ACL_SCOPES = {
     "floppy.approve_document": {"approve"},
 }
 
+MCP_TOOL_ACL_ANY_SCOPES = {
+    "floppy.get_dataset_build": {"build_dataset"},
+    "floppy.search_chunks": {"approve", "build_dataset", "chunk"},
+    "floppy.get_document_lineage": {"approve", "chunk"},
+}
+
 CHAT_RATING_FIELDS = (
     "rating_relevance",
     "rating_accuracy",
@@ -205,6 +214,74 @@ def is_auth_enforced() -> bool:
     return parse_env_bool(explicit, default=not IS_LOCAL_ENV)
 
 
+def resolve_admin_username() -> str:
+    """Return the configured admin username."""
+    return (
+        os.getenv("FLOPPY_ADMIN_USERNAME")
+        or os.getenv("ADMIN_USERNAME")
+        or "admin"
+    ).strip()
+
+
+def resolve_admin_password() -> str:
+    """Return the configured admin password."""
+    password = (
+        os.getenv("FLOPPY_ADMIN_PASSWORD")
+        or os.getenv("ADMIN_PASSWORD")
+        or ""
+    )
+    if password:
+        return password
+    if IS_LOCAL_ENV:
+        return "admin"
+    raise RuntimeError(
+        "La variable FLOPPY_ADMIN_PASSWORD est obligatoire hors environnement local."
+    )
+
+
+def verify_admin_credentials(username: str, password: str) -> bool:
+    """Verify admin credentials using constant-time comparisons."""
+    expected_username = resolve_admin_username()
+    expected_password = resolve_admin_password()
+    return hmac.compare_digest(username or "", expected_username) and hmac.compare_digest(
+        password or "",
+        expected_password,
+    )
+
+
+def login_admin_user(username: str):
+    """Open an admin browser session."""
+    session.clear()
+    session["admin_authenticated"] = True
+    session["admin_username"] = username
+
+
+def logout_admin_user():
+    """Close the admin browser session."""
+    session.clear()
+
+
+def is_admin_authenticated() -> bool:
+    """Return whether the current browser session is authenticated for admin UI."""
+    return bool(session.get("admin_authenticated"))
+
+
+def safe_next_url(raw_next: str, default_endpoint: str = "admin_dashboard") -> str:
+    """Resolve a local next URL for login redirects."""
+    candidate = (raw_next or "").strip()
+    if candidate.startswith("/") and not candidate.startswith("//"):
+        return candidate
+    return url_for(default_endpoint)
+
+
+def admin_auth_required_response():
+    """Return the right unauthorized response for admin UI routes."""
+    if request.is_json:
+        return api_error_response(status_code=401, code="unauthorized")
+    flash("Authentification administration requise.", "error")
+    return redirect(url_for("admin_login", next=(request.full_path or request.path).rstrip("?")))
+
+
 def normalize_scopes(raw_scopes):
     """Normalize scopes."""
     if raw_scopes is None:
@@ -253,7 +330,7 @@ def load_auth_tokens():
 
 
 def extract_request_token() -> str:
-    """Extract the caller token from request headers or parameters."""
+    """Extract the caller token from supported request headers only."""
     authorization_header = (request.headers.get("Authorization") or "").strip()
     if authorization_header.lower().startswith("bearer "):
         return authorization_header[7:].strip()
@@ -262,14 +339,6 @@ def extract_request_token() -> str:
         header_value = (request.headers.get(header_name) or "").strip()
         if header_value:
             return header_value
-
-    form_token = (request.form.get("api_token") or "").strip()
-    if form_token:
-        return form_token
-
-    query_token = (request.args.get("api_token") or "").strip()
-    if query_token:
-        return query_token
 
     return ""
 
@@ -376,25 +445,42 @@ def is_scope_authorized(granted_scopes, required_scopes) -> bool:
     return "admin" in granted_scopes or required.issubset(granted_scopes)
 
 
+def is_any_scope_authorized(granted_scopes, allowed_scopes) -> bool:
+    """Return whether at least one allowed scope is present."""
+    allowed = {scope for scope in allowed_scopes if scope}
+    if not allowed:
+        return True
+    return "admin" in granted_scopes or bool(allowed.intersection(granted_scopes))
+
+
 def enforce_mcp_tool_acl(tool_name: str):
     """Enforce mcp tool acl."""
     required_scopes = MCP_TOOL_ACL_SCOPES.get(tool_name)
-    if not required_scopes:
-        return
     if not is_auth_enforced():
         return
 
     token = extract_request_token()
     token_scopes = load_auth_tokens().get(token, set())
-    if not is_scope_authorized(token_scopes, required_scopes):
+    if required_scopes and not is_scope_authorized(token_scopes, required_scopes):
         raise PermissionError(
             f"Permissions insuffisantes pour '{tool_name}'. "
             f"Scope(s) requis: {', '.join(sorted(required_scopes))}."
         )
 
+    allowed_scopes = MCP_TOOL_ACL_ANY_SCOPES.get(tool_name)
+    if allowed_scopes and not is_any_scope_authorized(token_scopes, allowed_scopes):
+        raise PermissionError(
+            f"Permissions insuffisantes pour '{tool_name}'. "
+            f"Un des scopes suivants est requis: {', '.join(sorted(allowed_scopes))}."
+        )
+
 
 def require_scopes(*required_scopes):
-    """Protect a route with token scope checks."""
+    """Build a decorator that enforces token-based scope authorization.
+
+    When authentication is disabled for the environment, the wrapped route is
+    executed directly without scope checks.
+    """
     required = {scope.strip().lower() for scope in required_scopes if scope}
 
     def decorator(func):
@@ -402,6 +488,9 @@ def require_scopes(*required_scopes):
         @wraps(func)
         def wrapper(*args, **kwargs):
             """Enforce required scopes before executing the wrapped function."""
+            if is_admin_authenticated() and not request.path.startswith(("/api/", "/mcp")):
+                return func(*args, **kwargs)
+
             if not is_auth_enforced():
                 return func(*args, **kwargs)
 
@@ -415,6 +504,40 @@ def require_scopes(*required_scopes):
 
             granted_scopes = configured_tokens[token]
             if not is_scope_authorized(granted_scopes, required):
+                return auth_failure_response(
+                    status_code=403,
+                    message=DEFAULT_ERROR_MESSAGES["forbidden"],
+                )
+
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
+def require_any_scope(*allowed_scopes):
+    """Build a decorator that enforces at least one allowed token scope."""
+    allowed = {scope.strip().lower() for scope in allowed_scopes if scope}
+
+    def decorator(func):
+        """Decorate a function with any-of scope enforcement."""
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            """Enforce at least one allowed scope before executing the wrapped function."""
+            if not is_auth_enforced():
+                return func(*args, **kwargs)
+
+            configured_tokens = load_auth_tokens()
+            token = extract_request_token()
+            if not token or token not in configured_tokens:
+                return auth_failure_response(
+                    status_code=401,
+                    message=DEFAULT_ERROR_MESSAGES["unauthorized"],
+                )
+
+            granted_scopes = configured_tokens[token]
+            if not is_any_scope_authorized(granted_scopes, allowed):
                 return auth_failure_response(
                     status_code=403,
                     message=DEFAULT_ERROR_MESSAGES["forbidden"],
@@ -579,7 +702,11 @@ def create_project_tables(cur, slug: str):
 
 
 def create_project(name: str):
-    """Create project."""
+    """Create a project and provision all project-scoped tables.
+
+    The function validates the name, derives a unique slug, creates the
+    `{slug}_*` tables, then inserts the project record in `public.project`.
+    """
     project_name = name.strip()
     if not project_name:
         raise ValueError("Le nom du projet est obligatoire.")
@@ -963,7 +1090,11 @@ def ensure_chat_table_schema(cur, chat_table: str):
 
 
 def ensure_business_tables(cur):
-    """Ensure business tables."""
+    """Ensure shared business tables exist with required indexes/constraints.
+
+    This covers cross-project tables such as `document_registry`,
+    `document_processing`, `chunk_metadata`, and `dataset_build`.
+    """
     ensure_document_registry_table(cur)
     cur.execute(
         f"""
@@ -1019,6 +1150,43 @@ def ensure_business_tables(cur):
         """
     )
     cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} (
+            annotation_id text PRIMARY KEY,
+            document_id text NOT NULL,
+            project_slug text NOT NULL,
+            target_type text NOT NULL DEFAULT 'document'
+                CHECK (target_type IN ('document', 'section', 'chunk')),
+            target_id text,
+            section_path text,
+            severity text NOT NULL DEFAULT 'medium'
+                CHECK (severity IN ('low', 'medium', 'high')),
+            status text NOT NULL DEFAULT 'open'
+                CHECK (status IN ('open', 'resolved')),
+            note text NOT NULL,
+            created_by text,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now()
+        );
+        """
+    )
+    cur.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS public.{DOCUMENT_SECTION_EXCLUSION_TABLE} (
+            exclusion_id text PRIMARY KEY,
+            document_id text NOT NULL,
+            project_slug text NOT NULL,
+            section_path text NOT NULL,
+            section_title text,
+            reason text,
+            excluded_by text,
+            created_at timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now(),
+            UNIQUE (document_id, project_slug, section_path)
+        );
+        """
+    )
+    cur.execute(
         f"CREATE INDEX IF NOT EXISTS idx_{CHUNK_METADATA_TABLE}_project_shard ON public.{CHUNK_METADATA_TABLE} (project_slug, shard_id);"
     )
     cur.execute(
@@ -1038,6 +1206,12 @@ def ensure_business_tables(cur):
     )
     cur.execute(
         f"CREATE INDEX IF NOT EXISTS idx_{DATASET_BUILD_TABLE}_project ON public.{DATASET_BUILD_TABLE} (project_slug, created_at DESC);"
+    )
+    cur.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{DOCUMENT_REVIEW_ANNOTATION_TABLE}_document ON public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} (project_slug, document_id, created_at DESC);"
+    )
+    cur.execute(
+        f"CREATE INDEX IF NOT EXISTS idx_{DOCUMENT_SECTION_EXCLUSION_TABLE}_document ON public.{DOCUMENT_SECTION_EXCLUSION_TABLE} (project_slug, document_id);"
     )
 
 
@@ -1269,7 +1443,11 @@ def coerce_schema_value(value, field_name: str, field_schema):
 
 
 def validate_operation_payload(operation_name: str, payload):
-    """Validate and normalize an operation payload against its schema."""
+    """Validate and normalize a payload against an operation schema.
+
+    This is the common validation entry point used by REST and MCP handlers so
+    both interfaces share the same coercion/default/error behavior.
+    """
     schema = OPERATION_INPUT_SCHEMAS.get(operation_name)
     if schema is None:
         raise ValueError(f"Schema inconnu pour l'operation '{operation_name}'.")
@@ -1413,7 +1591,11 @@ def find_project_by_slug(cur, project_slug: str):
 
 
 def get_project_crud_payload(project_slug: str):
-    """Return project crud payload."""
+    """Build the aggregated CRUD payload used by project management views.
+
+    Returns project metadata along with shards, chunks, and train items for the
+    requested project.
+    """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             project = find_project_by_slug(cur, project_slug)
@@ -1547,7 +1729,11 @@ def get_project_crud_payload(project_slug: str):
 def get_project_chat_payload(
     project_slug: str, selected_session_id: str = "", auto_select_latest_session: bool = False
 ):
-    """Return project chat payload."""
+    """Build chat sessions/messages payload for a project.
+
+    A specific session can be selected explicitly, or auto-selected from the
+    latest known session when requested.
+    """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             project = find_project_by_slug(cur, project_slug)
@@ -1683,7 +1869,11 @@ def get_project_chat_payload(
 
 
 def get_project_chat_dashboard_payload(project_slug: str):
-    """Return project chat dashboard payload."""
+    """Build KPI analytics payload for the project chat dashboard.
+
+    The payload includes score aggregates, weekly trends, and a session-length
+    versus quality correlation view.
+    """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             project = find_project_by_slug(cur, project_slug)
@@ -2047,6 +2237,14 @@ def delete_project(project_slug: str):
                 (project_slug,),
             )
             cur.execute(
+                f"DELETE FROM public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} WHERE project_slug = %s;",
+                (project_slug,),
+            )
+            cur.execute(
+                f"DELETE FROM public.{DOCUMENT_SECTION_EXCLUSION_TABLE} WHERE project_slug = %s;",
+                (project_slug,),
+            )
+            cur.execute(
                 f"DELETE FROM public.{DOCUMENT_REGISTRY_TABLE} WHERE project_slug = %s;",
                 (project_slug,),
             )
@@ -2129,6 +2327,14 @@ def delete_shard_record(project_slug: str, shard_uuid: str):
             )
             cur.execute(
                 f"DELETE FROM public.{DOCUMENT_PROCESSING_TABLE} WHERE project_slug = %s AND document_id = %s;",
+                (project_slug, shard_uuid),
+            )
+            cur.execute(
+                f"DELETE FROM public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} WHERE project_slug = %s AND document_id = %s;",
+                (project_slug, shard_uuid),
+            )
+            cur.execute(
+                f"DELETE FROM public.{DOCUMENT_SECTION_EXCLUSION_TABLE} WHERE project_slug = %s AND document_id = %s;",
                 (project_slug, shard_uuid),
             )
             delete_document_registry_record(cur, shard_uuid, project_slug)
@@ -2245,6 +2451,15 @@ def delete_chunk_record(project_slug: str, chunk_uuid: str):
             ensure_business_tables(cur)
             cur.execute(
                 f"DELETE FROM public.{CHUNK_METADATA_TABLE} WHERE project_slug = %s AND chunk_id = %s;",
+                (project_slug, chunk_uuid),
+            )
+            cur.execute(
+                f"""
+                DELETE FROM public.{DOCUMENT_REVIEW_ANNOTATION_TABLE}
+                WHERE project_slug = %s
+                  AND target_type = 'chunk'
+                  AND target_id = %s;
+                """,
                 (project_slug, chunk_uuid),
             )
             chunk_table = f"{project_slug}_chunk"
@@ -2577,7 +2792,11 @@ def build_chunks_for_document(document, previous_document_id, options):
 
 
 def chunkify_project_shards(project_slug: str, options):
-    """Regenerate project chunks and metadata from shard documents."""
+    """Regenerate chunks and lineage metadata from project shard documents.
+
+    Existing chunk rows/metadata for each shard are cleared first, then rebuilt
+    in the same transaction to keep content and metadata consistent.
+    """
     shard_table = f"{project_slug}_shard"
     chunk_table = f"{project_slug}_chunk"
     generated_items = []
@@ -2609,6 +2828,7 @@ def chunkify_project_shards(project_slug: str, options):
             shard_rows = cur.fetchall()
 
             previous_document_id = None
+            excluded_paths_by_document = load_project_excluded_section_paths(cur, project_slug)
             for shard_row in shard_rows:
                 document = {
                     "uuid": shard_row[0],
@@ -2624,6 +2844,13 @@ def chunkify_project_shards(project_slug: str, options):
                     previous_document_id,
                     options,
                 )
+                excluded_section_paths = excluded_paths_by_document.get(document["uuid"], set())
+                if excluded_section_paths:
+                    document_chunks = [
+                        chunk_item
+                        for chunk_item in document_chunks
+                        if chunk_item["metadata"].get("section_path") not in excluded_section_paths
+                    ]
                 previous_document_id = document["uuid"]
 
                 # Regeneration is idempotent: remove previous chunks for this shard first.
@@ -2966,7 +3193,11 @@ def load_document_record_from_project(cur, project_slug: str, document_id: str):
 
 
 def find_document_record(cur, document_id: str, preferred_project_slug: str = ""):
-    """Find a document by id using preferred slug, registry, then fallback scan."""
+    """Resolve a document across projects with deterministic lookup order.
+
+    Lookup order is: preferred project, document registry hint, then project
+    scan. Stale registry mappings are cleaned up when they no longer resolve.
+    """
     doc_id = (document_id or "").strip()
     if not doc_id:
         raise ValueError("Le champ 'document_id' est obligatoire.")
@@ -3166,13 +3397,556 @@ def upsert_document_processing_record(
     return get_document_processing_record(cur, document_id)
 
 
-def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0):
+def list_document_review_annotations(cur, project_slug: str, document_id: str):
+    """Return human review annotations for one document."""
+    ensure_business_tables(cur)
+    cur.execute(
+        f"""
+        SELECT
+            annotation_id,
+            document_id,
+            project_slug,
+            target_type,
+            target_id,
+            section_path,
+            severity,
+            status,
+            note,
+            created_by,
+            created_at,
+            updated_at
+        FROM public.{DOCUMENT_REVIEW_ANNOTATION_TABLE}
+        WHERE project_slug = %s
+          AND document_id = %s
+        ORDER BY created_at DESC, annotation_id DESC;
+        """,
+        (project_slug, document_id),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "annotation_id": row[0],
+            "document_id": row[1],
+            "project_slug": row[2],
+            "target_type": row[3],
+            "target_id": row[4] or "",
+            "section_path": row[5] or "",
+            "severity": row[6],
+            "status": row[7],
+            "note": row[8] or "",
+            "created_by": row[9] or "",
+            "created_at": to_iso_or_none(row[10]),
+            "updated_at": to_iso_or_none(row[11]),
+        }
+        for row in rows
+    ]
+
+
+def list_document_section_exclusions(cur, project_slug: str, document_id: str):
+    """Return excluded sections for one document."""
+    ensure_business_tables(cur)
+    cur.execute(
+        f"""
+        SELECT
+            exclusion_id,
+            document_id,
+            project_slug,
+            section_path,
+            section_title,
+            reason,
+            excluded_by,
+            created_at,
+            updated_at
+        FROM public.{DOCUMENT_SECTION_EXCLUSION_TABLE}
+        WHERE project_slug = %s
+          AND document_id = %s
+        ORDER BY section_path;
+        """,
+        (project_slug, document_id),
+    )
+    rows = cur.fetchall()
+    return [
+        {
+            "exclusion_id": row[0],
+            "document_id": row[1],
+            "project_slug": row[2],
+            "section_path": row[3],
+            "section_title": row[4] or "",
+            "reason": row[5] or "",
+            "excluded_by": row[6] or "",
+            "created_at": to_iso_or_none(row[7]),
+            "updated_at": to_iso_or_none(row[8]),
+        }
+        for row in rows
+    ]
+
+
+def load_project_excluded_section_paths(cur, project_slug: str):
+    """Return excluded section paths indexed by document id for a project."""
+    ensure_business_tables(cur)
+    cur.execute(
+        f"""
+        SELECT document_id, section_path
+        FROM public.{DOCUMENT_SECTION_EXCLUSION_TABLE}
+        WHERE project_slug = %s;
+        """,
+        (project_slug,),
+    )
+    excluded_paths = {}
+    for document_id, section_path in cur.fetchall():
+        excluded_paths.setdefault(document_id, set()).add(section_path)
+    return excluded_paths
+
+
+def list_document_review_items(project_slug: str = "", limit: int = 500):
+    """Return documents available for human review."""
+    requested_slug = (project_slug or "").strip()
+    safe_limit = max(1, min(1000, int(limit or 500)))
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            if requested_slug:
+                project_slugs = [find_project_by_slug(cur, requested_slug)["slug"]]
+            else:
+                project_slugs = list_project_slugs(cur)
+
+            review_items = []
+            for slug in project_slugs:
+                project = find_project_by_slug(cur, slug)
+                shard_table = f"{slug}_shard"
+                chunk_table = f"{slug}_chunk"
+                if not table_exists(cur, shard_table):
+                    continue
+
+                chunk_join = (
+                    sql.SQL("LEFT JOIN {} AS c ON c.shard_id = s.uuid").format(
+                        sql.Identifier("public", chunk_table)
+                    )
+                    if table_exists(cur, chunk_table)
+                    else sql.SQL("")
+                )
+                chunk_count_expression = (
+                    sql.SQL("COUNT(DISTINCT c.uuid)::int")
+                    if table_exists(cur, chunk_table)
+                    else sql.SQL("0")
+                )
+
+                cur.execute(
+                    sql.SQL(
+                        f"""
+                        SELECT
+                            s.uuid,
+                            s.title_document,
+                            s.source_document,
+                            s.url_document,
+                            s.autor_document,
+                            s.content_document,
+                            p.approval_status,
+                            p.quality_score,
+                            p.normalization_version,
+                            p.updated_at,
+                            {{}},
+                            COUNT(DISTINCT a.annotation_id)::int AS annotation_count,
+                            COUNT(DISTINCT e.exclusion_id)::int AS exclusion_count
+                        FROM {{}} AS s
+                        {{}}
+                        LEFT JOIN public.{DOCUMENT_PROCESSING_TABLE} AS p
+                            ON p.document_id = s.uuid
+                           AND p.project_slug = %s
+                        LEFT JOIN public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} AS a
+                            ON a.document_id = s.uuid
+                           AND a.project_slug = %s
+                        LEFT JOIN public.{DOCUMENT_SECTION_EXCLUSION_TABLE} AS e
+                            ON e.document_id = s.uuid
+                           AND e.project_slug = %s
+                        GROUP BY
+                            s.uuid,
+                            s.title_document,
+                            s.source_document,
+                            s.url_document,
+                            s.autor_document,
+                            s.content_document,
+                            p.approval_status,
+                            p.quality_score,
+                            p.normalization_version,
+                            p.updated_at
+                        ORDER BY s.uuid DESC;
+                        """
+                    ).format(
+                        chunk_count_expression,
+                        sql.Identifier("public", shard_table),
+                        chunk_join,
+                    ),
+                    (slug, slug, slug),
+                )
+
+                for row in cur.fetchall():
+                    review_items.append(
+                        {
+                            "document_id": row[0],
+                            "project_slug": slug,
+                            "project_name": project["name"],
+                            "title_document": row[1] or "",
+                            "source_document": row[2] or "",
+                            "url_document": row[3] or "",
+                            "autor_document": row[4] or "",
+                            "content_preview": shorten_text(row[5] or "", 180),
+                            "approval_status": row[6] or "pending",
+                            "quality_score": float(row[7]) if row[7] is not None else compute_quality_score(row[5] or ""),
+                            "normalization_version": row[8] or "",
+                            "processing_updated_at": to_iso_or_none(row[9]),
+                            "chunk_count": int(row[10] or 0),
+                            "annotation_count": int(row[11] or 0),
+                            "exclusion_count": int(row[12] or 0),
+                        }
+                    )
+
+            review_items.sort(key=lambda item: (item["project_slug"], item["document_id"]), reverse=True)
+            return review_items[:safe_limit]
+
+
+def get_document_review_chunks(cur, project_slug: str, document_id: str, excluded_section_paths):
+    """Return all chunks for one document, including excluded ones."""
+    chunk_table = f"{project_slug}_chunk"
+    if not table_exists(cur, chunk_table):
+        return []
+
+    cur.execute(
+        sql.SQL(
+            f"""
+            SELECT
+                c.uuid,
+                c.shard_id,
+                c.source_document,
+                c.url_document,
+                c.title_document,
+                c.content_document,
+                c.autor_document,
+                m.section_title,
+                m.section_path,
+                m.previous_document_id,
+                m.previous_chunk_id,
+                m.next_chunk_id,
+                m.quality_score
+            FROM {{}} AS c
+            LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
+                ON m.chunk_id = c.uuid
+               AND m.project_slug = %s
+            WHERE c.shard_id = %s
+            ORDER BY c.uuid;
+            """
+        ).format(sql.Identifier("public", chunk_table)),
+        (project_slug, document_id),
+    )
+
+    chunks = []
+    for row in cur.fetchall():
+        section_title = row[7] or row[4] or "Section"
+        section_path = row[8] or section_title
+        content_document = row[5] or ""
+        chunks.append(
+            {
+                "uuid": row[0],
+                "shard_id": row[1] or "",
+                "source_document": row[2] or "",
+                "url_document": row[3] or "",
+                "title_document": row[4] or "",
+                "content_document": content_document,
+                "content_preview": shorten_text(content_document, 220),
+                "autor_document": row[6] or "",
+                "quality_score": float(row[12]) if row[12] is not None else compute_quality_score(content_document),
+                "excluded": section_path in excluded_section_paths,
+                "metadata": {
+                    "section_title": section_title,
+                    "section_path": section_path,
+                    "previous_document_id": row[9],
+                    "previous_chunk_id": row[10],
+                    "next_chunk_id": row[11],
+                },
+            }
+        )
+    return chunks
+
+
+def get_document_review_payload(project_slug: str, document_id: str):
+    """Return source, normalized content, chunks, and review metadata."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            project = find_project_by_slug(cur, document["project_slug"])
+            processing = get_document_processing_record(cur, document["uuid"])
+
+            normalized_content = normalize_document_content(document["content_document"])
+            if processing:
+                if not processing.get("normalized_content"):
+                    processing["normalized_content"] = normalized_content
+                if not processing.get("rendered_text"):
+                    processing["rendered_text"] = processing["normalized_content"]
+                if not processing.get("structured_content"):
+                    processing["structured_content"] = build_structured_content(
+                        processing["normalized_content"],
+                        heading_max_level=3,
+                    )
+            else:
+                processing = {
+                    "document_id": document["uuid"],
+                    "project_slug": document["project_slug"],
+                    "normalization_version": DEFAULT_NORMALIZATION_VERSION,
+                    "normalized_content": normalized_content,
+                    "rendered_text": normalized_content,
+                    "structured_content": build_structured_content(normalized_content, heading_max_level=3),
+                    "approval_status": "pending",
+                    "approval_comment": "",
+                    "approved_by": "",
+                    "approved_at": None,
+                    "quality_score": compute_quality_score(normalized_content),
+                    "created_at": None,
+                    "updated_at": None,
+                }
+
+            exclusions = list_document_section_exclusions(cur, document["project_slug"], document["uuid"])
+            excluded_section_paths = {item["section_path"] for item in exclusions}
+            chunks = get_document_review_chunks(
+                cur,
+                document["project_slug"],
+                document["uuid"],
+                excluded_section_paths,
+            )
+            annotations = list_document_review_annotations(cur, document["project_slug"], document["uuid"])
+
+    sections = processing.get("structured_content", {}).get("sections", [])
+    chunk_metadata = [
+        {
+            "chunk_id": chunk["uuid"],
+            "quality_score": chunk["quality_score"],
+            "excluded": chunk["excluded"],
+            **chunk["metadata"],
+        }
+        for chunk in chunks
+    ]
+    section_options = []
+    seen_section_paths = set()
+    for section in sections:
+        section_path = section.get("section_path") or section.get("section_title") or ""
+        if not section_path or section_path in seen_section_paths:
+            continue
+        seen_section_paths.add(section_path)
+        section_options.append(
+            {
+                "section_path": section_path,
+                "section_title": section.get("section_title") or section_path,
+            }
+        )
+    for chunk in chunks:
+        section_path = chunk["metadata"].get("section_path") or ""
+        if not section_path or section_path in seen_section_paths:
+            continue
+        seen_section_paths.add(section_path)
+        section_options.append(
+            {
+                "section_path": section_path,
+                "section_title": chunk["metadata"].get("section_title") or section_path,
+            }
+        )
+    metadata = {
+        "document": {
+            key: value
+            for key, value in document.items()
+            if key not in {"content_document"}
+        },
+        "processing": {
+            key: value
+            for key, value in processing.items()
+            if key not in {"normalized_content", "rendered_text", "structured_content"}
+        },
+        "chunk_metadata": chunk_metadata,
+        "annotations": annotations,
+        "exclusions": exclusions,
+    }
+
+    return {
+        "project": project,
+        "document": document,
+        "processing": processing,
+        "sections": sections,
+        "section_options": section_options,
+        "chunks": chunks,
+        "annotations": annotations,
+        "exclusions": exclusions,
+        "metadata": metadata,
+    }
+
+
+def add_document_review_annotation(project_slug: str, document_id: str, payload, reviewer: str = ""):
+    """Create a human review anomaly annotation."""
+    target_type = (payload.get("target_type") or "document").strip().lower()
+    if target_type not in {"document", "section", "chunk"}:
+        raise ValueError("Le champ 'target_type' doit etre: document, section ou chunk.")
+
+    severity = (payload.get("severity") or "medium").strip().lower()
+    if severity not in {"low", "medium", "high"}:
+        raise ValueError("Le champ 'severity' doit etre: low, medium ou high.")
+
+    status = (payload.get("status") or "open").strip().lower()
+    if status not in {"open", "resolved"}:
+        raise ValueError("Le champ 'status' doit etre: open ou resolved.")
+
+    note = (payload.get("note") or "").strip()
+    if not note:
+        raise ValueError("Le commentaire d'anomalie est obligatoire.")
+
+    created_by = (payload.get("created_by") or reviewer or "").strip()
+    target_id = (payload.get("target_id") or "").strip()
+    section_path = (payload.get("section_path") or "").strip()
+    annotation_id = f"ann_{uuid4().hex}"
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            cur.execute(
+                f"""
+                INSERT INTO public.{DOCUMENT_REVIEW_ANNOTATION_TABLE} (
+                    annotation_id,
+                    document_id,
+                    project_slug,
+                    target_type,
+                    target_id,
+                    section_path,
+                    severity,
+                    status,
+                    note,
+                    created_by,
+                    updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now());
+                """,
+                (
+                    annotation_id,
+                    document["uuid"],
+                    document["project_slug"],
+                    target_type,
+                    target_id or None,
+                    section_path or None,
+                    severity,
+                    status,
+                    note,
+                    created_by or None,
+                ),
+            )
+
+    return annotation_id
+
+
+def delete_document_review_annotation(project_slug: str, document_id: str, annotation_id: str):
+    """Delete one review annotation."""
+    target_annotation_id = (annotation_id or "").strip()
+    if not target_annotation_id:
+        raise ValueError("Identifiant d'annotation obligatoire.")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            cur.execute(
+                f"""
+                DELETE FROM public.{DOCUMENT_REVIEW_ANNOTATION_TABLE}
+                WHERE annotation_id = %s
+                  AND document_id = %s
+                  AND project_slug = %s;
+                """,
+                (target_annotation_id, document["uuid"], document["project_slug"]),
+            )
+            if cur.rowcount == 0:
+                raise ValueError("Annotation introuvable.")
+
+
+def add_document_section_exclusion(project_slug: str, document_id: str, payload, reviewer: str = ""):
+    """Create or update a section exclusion for one document."""
+    section_path = (payload.get("section_path") or "").strip()
+    if not section_path:
+        raise ValueError("La section a exclure est obligatoire.")
+
+    section_title = (payload.get("section_title") or section_path.split(" > ")[-1] or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    excluded_by = (payload.get("excluded_by") or reviewer or "").strip()
+    exclusion_id = f"exc_{uuid4().hex}"
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            cur.execute(
+                f"""
+                INSERT INTO public.{DOCUMENT_SECTION_EXCLUSION_TABLE} (
+                    exclusion_id,
+                    document_id,
+                    project_slug,
+                    section_path,
+                    section_title,
+                    reason,
+                    excluded_by,
+                    updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                ON CONFLICT (document_id, project_slug, section_path)
+                DO UPDATE SET
+                    section_title = EXCLUDED.section_title,
+                    reason = EXCLUDED.reason,
+                    excluded_by = EXCLUDED.excluded_by,
+                    updated_at = now()
+                RETURNING exclusion_id;
+                """,
+                (
+                    exclusion_id,
+                    document["uuid"],
+                    document["project_slug"],
+                    section_path,
+                    section_title or None,
+                    reason or None,
+                    excluded_by or None,
+                ),
+            )
+            saved_exclusion_id = cur.fetchone()[0]
+
+    return saved_exclusion_id
+
+
+def delete_document_section_exclusion(project_slug: str, document_id: str, exclusion_id: str):
+    """Delete one section exclusion."""
+    target_exclusion_id = (exclusion_id or "").strip()
+    if not target_exclusion_id:
+        raise ValueError("Identifiant d'exclusion obligatoire.")
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            cur.execute(
+                f"""
+                DELETE FROM public.{DOCUMENT_SECTION_EXCLUSION_TABLE}
+                WHERE exclusion_id = %s
+                  AND document_id = %s
+                  AND project_slug = %s;
+                """,
+                (target_exclusion_id, document["uuid"], document["project_slug"]),
+            )
+            if cur.rowcount == 0:
+                raise ValueError("Exclusion introuvable.")
+
+
+def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, include_excluded: bool = False):
     """Run collect project chunks."""
     _ = find_project_by_slug(cur, project_slug)
     ensure_business_tables(cur)
     chunk_table = f"{project_slug}_chunk"
     if not table_exists(cur, chunk_table):
         raise ValueError(f"La table '{chunk_table}' est introuvable.")
+    excluded_paths_by_document = (
+        {}
+        if include_excluded
+        else load_project_excluded_section_paths(cur, project_slug)
+    )
 
     cur.execute(
         sql.SQL(
@@ -3222,6 +3996,7 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0):
         next_chunk_id = row[11]
         quality_score = float(row[12]) if row[12] is not None else compute_quality_score(content_document)
         approval_status = row[13] or "pending"
+        is_excluded = section_path in excluded_paths_by_document.get(shard_id, set())
 
         if row[12] is None:
             cur.execute(
@@ -3258,6 +4033,8 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0):
                 ),
             )
 
+        if is_excluded and not include_excluded:
+            continue
         if quality_score < quality_min:
             continue
 
@@ -3272,6 +4049,7 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0):
                 "autor_document": autor_document,
                 "quality_score": quality_score,
                 "approval_status": approval_status,
+                "excluded": is_excluded,
                 "metadata": {
                     "section_title": section_title,
                     "section_path": section_path,
@@ -3286,7 +4064,11 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0):
 
 
 def import_documents_for_project(project_slug: str, documents):
-    """Import documents for project."""
+    """Import a batch of source documents into a project's shard table.
+
+    Each valid input document is inserted as a shard row and registered in
+    `document_registry` for fast `document_id -> project_slug` resolution.
+    """
     if not isinstance(documents, list) or not documents:
         raise ValueError("Le payload doit contenir une liste 'documents' non vide.")
 
@@ -3372,7 +4154,11 @@ def import_documents_for_project(project_slug: str, documents):
 
 
 def normalize_document_by_id(document_id: str, project_slug: str = "", normalization_version: str = ""):
-    """Normalize document by id."""
+    """Normalize one document and persist its processing snapshot.
+
+    The function computes normalized/structured forms plus a quality score, then
+    upserts the corresponding record in `document_processing`.
+    """
     version = (normalization_version or DEFAULT_NORMALIZATION_VERSION).strip() or DEFAULT_NORMALIZATION_VERSION
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -3405,7 +4191,11 @@ def normalize_document_by_id(document_id: str, project_slug: str = "", normaliza
 
 
 def chunk_project_for_api(project_slug: str, payload):
-    """Run chunk project for api."""
+    """Run chunk generation for a project and return API-friendly output.
+
+    Chunk options are parsed and validated before invoking the core chunking
+    service.
+    """
     options = parse_chunk_options(payload)
     generated_items = chunkify_project_shards(project_slug, options)
     return {
@@ -3417,7 +4207,11 @@ def chunk_project_for_api(project_slug: str, payload):
 
 
 def build_dataset_for_project(project_slug: str, payload):
-    """Build dataset for project."""
+    """Build a dataset snapshot from filtered project chunks.
+
+    Applies quality and approval filters, enforces a limit, estimates token
+    volume, and stores build metadata in `dataset_build`.
+    """
     quality_min = parse_float_field(payload.get("quality_min"), "quality_min", default=0.0)
     quality_min = max(0.0, min(1.0, quality_min))
     limit = parse_int_field(payload.get("limit"), "limit", default=2000)
@@ -3582,7 +4376,11 @@ def list_chunks_for_api(project_slug: str, quality_min: float, limit: int, offse
 
 
 def get_document_lineage(document_id: str, project_slug: str = ""):
-    """Return document lineage."""
+    """Return document lineage with processing and chunk navigation metadata.
+
+    Combines `document_processing` with chunk metadata links
+    (`previous_*`/`next_*`) for traceability.
+    """
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             ensure_business_tables(cur)
@@ -3685,7 +4483,11 @@ def get_document_lineage(document_id: str, project_slug: str = ""):
 
 
 def approve_document_by_id(document_id: str, payload):
-    """Approve document by id."""
+    """Set approval status and reviewer metadata for a document.
+
+    Supports `pending`, `approved`, and `rejected` states while preserving an
+    existing quality score when one is already available.
+    """
     requested_status = (payload.get("status") or "approved").strip().lower()
     if requested_status not in {"pending", "approved", "rejected"}:
         raise ValueError("Le champ 'status' doit etre: pending, approved ou rejected.")
@@ -3731,7 +4533,10 @@ MCP_PROTOCOL_VERSION = "2024-11-05"
 
 
 def mcp_tools_catalog():
-    """Return the MCP tool definitions exposed by the server."""
+    """Return the MCP tool catalog exposed by this server.
+
+    Each tool includes a stable name, description, and JSON input schema.
+    """
     return [
         {
             "name": "floppy.import_documents",
@@ -3848,7 +4653,11 @@ def mcp_tools_catalog():
 
 
 def execute_mcp_tool(tool_name: str, arguments):
-    """Execute an MCP tool call after argument normalization."""
+    """Dispatch a validated MCP tool call to the corresponding service.
+
+    Unknown tool names raise `ValueError` with a normalized, client-safe
+    message.
+    """
     args = arguments if isinstance(arguments, dict) else {}
 
     if tool_name == "floppy.import_documents":
@@ -3932,7 +4741,7 @@ def mcp_tool_result_payload(data, is_error: bool = False):
 
 def resolve_return_url(return_to: str, default_endpoint: str, project_slug: str):
     """Resolve return url."""
-    allowed_no_args = {"home", "projects_shards", "projects_train", "projects_tree"}
+    allowed_no_args = {"home", "admin_dashboard", "projects_shards", "projects_train"}
     allowed_with_slug = {
         "project_shard_list",
         "project_shard_new",

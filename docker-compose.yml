@@ -1,6 +1,6 @@
 services:
   dataswarehouse-db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: dataswarehouse-db
     restart: unless-stopped
     environment:

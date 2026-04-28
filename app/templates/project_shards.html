@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Datas Warehouse</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('home') }}">Accueil</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
         <a class="ghost-link" href="{{ url_for('projects_train') }}">Vue train</a>
-        <a class="ghost-link" href="{{ url_for('projects_tree') }}">Tree view</a>
       </div>
       <h1>Vue shards et chunks</h1>
       <p class="lead">
@@ -56,6 +56,7 @@
           </p>
           <p class="muted-line">
             <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Ouvrir Chat-list</a>
+            <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Ouvrir revue documents</a>
           </p>
 
           <form method="post" action="{{ url_for('chunkify_project', project_slug=project.slug) }}" class="chunk-form">
@@ -98,7 +99,10 @@
                       <td><code>{{ shard.uuid }}</code></td>
                       <td>{{ shard.title_document or '-' }}</td>
                       <td>{{ shard.source_document or '-' }}</td>
-                      <td><strong>{{ shard.chunk_count }}</strong></td>
+                      <td>
+                        <strong>{{ shard.chunk_count }}</strong><br>
+                        <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=project.slug, document_id=shard.uuid) }}">Revue</a>
+                      </td>
                     </tr>
                   {% endfor %}
                 </tbody>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('home') }}">Espace public</a>
+        <a class="ghost-link" href="{{ url_for('agentai_docs') }}">AgentAI Docs</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Webchat public</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+        <form method="post" action="{{ url_for('admin_logout') }}" class="inline-form">
+          <button class="ghost-button" type="submit">Deconnexion</button>
+        </form>
+      </div>
+      <h1>Tableau de bord</h1>
+      <p class="lead">
+        Supervision des projets, modules de preparation de donnees, configuration LLM et suivi des sessions.
+      </p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    <section class="card">
+      <h2>Etat plateforme</h2>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">LLM</p>
+          <p class="kpi-value">{{ llm_status.status_label }}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Provider</p>
+          <p class="kpi-value">{{ llm_status.provider or '-' }}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Modele</p>
+          <p class="kpi-value">{{ llm_status.model or '-' }}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Sessions LLM</p>
+          <p class="kpi-value">{% if audit_stats %}{{ audit_stats.session_count }}{% else %}-{% endif %}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Echanges traces</p>
+          <p class="kpi-value">{% if audit_stats %}{{ audit_stats.exchange_count }}{% else %}-{% endif %}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Sessions QuizBot</p>
+          <p class="kpi-value">{% if quizbot_stats %}{{ quizbot_stats.total_sessions }}{% else %}-{% endif %}</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Sujets QuizBot actifs</p>
+          <p class="kpi-value">{% if quizbot_stats %}{{ quizbot_stats.active_topic_count }}{% else %}-{% endif %}</p>
+        </article>
+      </div>
+      {% if llm_status.error %}
+        <div class="alert error">{{ llm_status.error }}</div>
+      {% endif %}
+      {% if audit_error %}
+        <div class="alert error">{{ audit_error }}</div>
+      {% endif %}
+      {% if quizbot_error %}
+        <div class="alert error">{{ quizbot_error }}</div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Project - Add</h2>
+      <form method="post" action="{{ url_for('add_project') }}" class="project-form">
+        <label for="project_name">Nom du projet</label>
+        <input
+          id="project_name"
+          name="project_name"
+          type="text"
+          placeholder="Ex: ExempleProjet Datas"
+          required
+          autocomplete="off"
+        >
+        <p class="slug-preview">
+          Slug detecte: <code id="slugPreview">exempleprojet_datas</code>
+        </p>
+        <button type="submit" class="icon-btn icon-add" title="Ajouter projet" aria-label="Ajouter projet"></button>
+      </form>
+
+      {% if db_error %}
+        <div class="alert error">Connexion PostgreSQL impossible: {{ db_error }}</div>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Modules existants</h2>
+      <div class="action-row">
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Vue globale shards/chunks</a>
+        <a class="ghost-link" href="{{ url_for('admin_document_review') }}">Revue documents</a>
+        <a class="ghost-link" href="{{ url_for('projects_train') }}">Vue globale train</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Configuration webchat public</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat_sessions') }}">Sessions webchat public</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Project list</h2>
+      {% if projects %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nom</th>
+                <th>Slug</th>
+                <th>UUID</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for project in projects %}
+                <tr>
+                  <td>{{ project.name }}</td>
+                  <td><code>{{ project.slug }}</code></td>
+                  <td><code>{{ project.uuid }}</code></td>
+                  <td>
+                    <div class="action-row">
+                      <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard-list</a>
+                      <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Revue</a>
+                      <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=project.slug) }}">Train-list</a>
+                      <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk-list</a>
+                      <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Chat-list</a>
+                      <form method="post" action="{{ url_for('remove_project', project_slug=project.slug) }}" class="inline-form">
+                        <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer projet" aria-label="Supprimer projet"></button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucun projet pour le moment.</p>
+      {% endif %}
+    </section>
+  </main>
+
+  <script>
+    const projectNameInput = document.getElementById("project_name");
+    const slugPreview = document.getElementById("slugPreview");
+
+    function toSlug(value) {
+      const normalized = value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+      let slug = normalized
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 50);
+
+      if (!slug) return "slug_invalide";
+      if (/^\d/.test(slug)) slug = "p_" + slug;
+      return slug;
+    }
+
+    projectNameInput.addEventListener("input", (event) => {
+      slugPreview.textContent = toSlug(event.target.value);
+    });
+  </script>
+</body>
+</html>

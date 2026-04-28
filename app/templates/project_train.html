@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
@@ -7,14 +7,14 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+  {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Datas Warehouse</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('home') }}">Accueil</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
         <a class="ghost-link" href="{{ url_for('projects_shards') }}">Vue shards</a>
-        <a class="ghost-link" href="{{ url_for('projects_tree') }}">Tree view</a>
       </div>
       <h1>Vue train</h1>
       <p class="lead">

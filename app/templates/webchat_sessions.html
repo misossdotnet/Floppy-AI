@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sessions webchat | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Configuration webchat</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+      </div>
+      <h1>Sessions webchat public</h1>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Sessions</h2>
+      {% if sessions %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Status</th>
+                <th>Messages</th>
+                <th>Dernier message</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for session in sessions %}
+                <tr>
+                  <td><code>{{ session.session_id }}</code></td>
+                  <td>{{ session.status }}</td>
+                  <td>{{ session.message_count }}</td>
+                  <td>{{ session.last_message_at or session.updated_at }}</td>
+                  <td>
+                    <a class="ghost-link" href="{{ url_for('admin_webchat_session_detail', session_id=session.session_id) }}">Ouvrir</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucune session webchat public.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

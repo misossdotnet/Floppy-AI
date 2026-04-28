@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revue documents | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Workflow qualite</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Vue shards/chunks</a>
+      </div>
+      <h1>Revue documents</h1>
+      <p class="lead">File de revue des documents sources, de leur texte normalise, de leurs chunks et de leurs metadonnees qualite.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Filtres</h2>
+      <form method="get" action="{{ url_for('admin_document_review') }}" class="review-filter-form">
+        <label>Projet
+          <select name="project">
+            <option value="">Tous les projets</option>
+            {% for project in projects %}
+              <option value="{{ project.slug }}" {% if selected_project == project.slug %}selected{% endif %}>
+                {{ project.name }} / {{ project.slug }}
+              </option>
+            {% endfor %}
+          </select>
+        </label>
+        <button type="submit" class="ghost-button">Filtrer</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Documents</h2>
+      {% if documents %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Document</th>
+                <th>Projet</th>
+                <th>Statut</th>
+                <th>Qualite</th>
+                <th>Chunks</th>
+                <th>Anomalies</th>
+                <th>Exclusions</th>
+                <th>Apercu</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in documents %}
+                <tr>
+                  <td>
+                    <strong>{{ item.title_document or 'Sans titre' }}</strong><br>
+                    <code>{{ item.document_id }}</code>
+                  </td>
+                  <td>
+                    {{ item.project_name }}<br>
+                    <code>{{ item.project_slug }}</code>
+                  </td>
+                  <td><span class="status-badge status-{{ item.approval_status }}">{{ item.approval_status }}</span></td>
+                  <td>{{ "%.2f"|format(item.quality_score or 0) }}</td>
+                  <td><strong>{{ item.chunk_count }}</strong></td>
+                  <td><strong>{{ item.annotation_count }}</strong></td>
+                  <td><strong>{{ item.exclusion_count }}</strong></td>
+                  <td>{{ item.content_preview or '-' }}</td>
+                  <td>
+                    <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=item.project_slug, document_id=item.document_id) }}">Ouvrir revue</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucun document a revoir.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

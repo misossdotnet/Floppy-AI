@@ -130,6 +130,7 @@ def register_api_rest_routes(app):
 
     @app.get("/dataset-builds/<build_id>")
     @app.get("/api/v1/dataset-builds/<build_id>")
+    @require_scopes("build_dataset")
     def api_dataset_build_get(build_id):
         """Handle the api dataset build get request."""
         try:
@@ -154,6 +155,7 @@ def register_api_rest_routes(app):
 
     @app.get("/chunks")
     @app.get("/api/v1/chunks")
+    @require_any_scope("chunk", "build_dataset", "approve")
     def api_chunks_list():
         """Handle the api chunks list request."""
         try:
@@ -188,6 +190,7 @@ def register_api_rest_routes(app):
 
     @app.get("/documents/<document_id>/lineage")
     @app.get("/api/v1/documents/<document_id>/lineage")
+    @require_any_scope("chunk", "approve")
     def api_document_lineage(document_id):
         """Handle the api document lineage request."""
         try:

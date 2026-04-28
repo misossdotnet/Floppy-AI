@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Webchat | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page webchat-page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Webchat public</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('public_quizbot') }}">QuizBot</a>
+      </div>
+      <h1>Webchat</h1>
+      <p class="lead">Conversation avec le moteur LLM connecte.</p>
+    </section>
+
+    <section class="card webchat-shell">
+      <div id="webchatMessages" class="webchat-messages" aria-live="polite"></div>
+      <form id="webchatForm" class="webchat-form">
+        <label for="webchatInput" class="sr-only">Message</label>
+        <textarea id="webchatInput" rows="3" placeholder="Ecrivez votre message..." required></textarea>
+        <button id="webchatSend" type="submit" class="icon-btn icon-run" title="Envoyer" aria-label="Envoyer"></button>
+      </form>
+      <p id="webchatStatus" class="muted-line"></p>
+    </section>
+  </main>
+
+  <script>
+    const messagesNode = document.getElementById("webchatMessages");
+    const form = document.getElementById("webchatForm");
+    const input = document.getElementById("webchatInput");
+    const sendButton = document.getElementById("webchatSend");
+    const statusNode = document.getElementById("webchatStatus");
+    let sessionId = window.localStorage.getItem("floppy_webchat_session") || "";
+
+    function appendMessage(role, content, reasoning = "") {
+      const item = document.createElement("article");
+      item.className = `webchat-message ${role}`;
+      const head = document.createElement("div");
+      head.className = "webchat-message-head";
+      const label = document.createElement("p");
+      label.className = "chat-type";
+      label.textContent = role === "user" ? "Vous" : "Assistant";
+      head.appendChild(label);
+      let reasoningPanel = null;
+      if (role === "assistant" && reasoning) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "icon-btn icon-dialogue reasoning-toggle";
+        toggle.title = "Afficher le raisonnement";
+        toggle.setAttribute("aria-label", "Afficher le raisonnement");
+        toggle.setAttribute("aria-expanded", "false");
+        head.appendChild(toggle);
+        reasoningPanel = document.createElement("div");
+        reasoningPanel.className = "webchat-reasoning";
+        reasoningPanel.hidden = true;
+        const reasoningText = document.createElement("pre");
+        reasoningText.textContent = reasoning;
+        reasoningPanel.appendChild(reasoningText);
+        toggle.addEventListener("click", () => {
+          const isOpen = !reasoningPanel.hidden;
+          reasoningPanel.hidden = isOpen;
+          toggle.classList.toggle("active", !isOpen);
+          toggle.setAttribute("aria-expanded", String(!isOpen));
+          toggle.title = isOpen ? "Afficher le raisonnement" : "Masquer le raisonnement";
+          toggle.setAttribute("aria-label", toggle.title);
+          messagesNode.scrollTop = messagesNode.scrollHeight;
+        });
+      }
+      const text = document.createElement("pre");
+      text.textContent = content;
+      item.appendChild(head);
+      item.appendChild(text);
+      if (reasoningPanel) {
+        item.appendChild(reasoningPanel);
+      }
+      messagesNode.appendChild(item);
+      messagesNode.scrollTop = messagesNode.scrollHeight;
+    }
+
+    function setStatus(message, isError = false) {
+      statusNode.textContent = message;
+      statusNode.classList.toggle("status-error", isError);
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const message = input.value.trim();
+      if (!message) return;
+      appendMessage("user", message);
+      input.value = "";
+      sendButton.disabled = true;
+      setStatus("Traitement en cours...");
+      try {
+        const response = await fetch("{{ url_for('public_webchat_message') }}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+          },
+          body: JSON.stringify({ session_id: sessionId, message }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.error?.message || "Message non traite.");
+        }
+        sessionId = data.session_id;
+        window.localStorage.setItem("floppy_webchat_session", sessionId);
+        appendMessage("assistant", data.message, data.reasoning || "");
+        setStatus("");
+      } catch (error) {
+        appendMessage("assistant", error.message);
+        setStatus(error.message, true);
+      } finally {
+        sendButton.disabled = false;
+        input.focus();
+      }
+    });
+  </script>
+</body>
+</html>

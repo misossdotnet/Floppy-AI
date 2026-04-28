@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QuizBot indisponible | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page narrow-page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">QuizBot</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('public_webchat') }}">WebChat</a>
+      </div>
+      <h1>QuizBot indisponible</h1>
+    </section>
+
+    <section class="card">
+      {% if status.db_error %}
+        <div class="alert error">QuizBot est temporairement indisponible.</div>
+      {% elif not status.enabled %}
+        <div class="alert error">QuizBot est desactive par l'administration.</div>
+      {% elif not status.configured %}
+        <div class="alert error">QuizBot n'est pas encore configure.</div>
+      {% elif status.active_topic_count <= 0 %}
+        <div class="alert error">Aucun sujet actif n'est disponible.</div>
+      {% else %}
+        <div class="alert error">QuizBot ne peut pas etre ouvert.</div>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

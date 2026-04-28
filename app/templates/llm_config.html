@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration LLM | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  {% set provider_options = ["ollama", "litellm", "openai", "lmstudio", "openai_compatible", "custom"] %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Webchat public</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+        <a class="ghost-link" href="{{ url_for('agentai_docs') }}">AgentAI Docs</a>
+      </div>
+      <h1>Configuration LLM</h1>
+      <p class="lead">Registre des moteurs d'inference utilises par les modules conversationnels.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if config_error %}
+      <section class="card">
+        <div class="alert error">{{ config_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Status par defaut</h2>
+      {% if status %}
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Connexion</p>
+            <p class="kpi-value">{{ status.status_label }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Configuration</p>
+            <p class="kpi-value">{{ status.name or status.config_id or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Provider</p>
+            <p class="kpi-value">{{ status.provider or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ status.model or '-' }}</p>
+          </article>
+        </div>
+        {% if status.error %}
+          <div class="alert error">{{ status.error }}</div>
+        {% endif %}
+      {% else %}
+        <p class="empty">Status indisponible.</p>
+      {% endif %}
+    </section>
+
+    <section class="card">
+      <h2>Ajouter une configuration</h2>
+      <form method="post" action="{{ url_for('admin_llm_config') }}" class="train-form">
+        <div class="train-grid">
+          <label>name
+            <input type="text" name="name" placeholder="Ollama local">
+          </label>
+          <label>provider
+            <select name="provider" required>
+              {% for provider in provider_options %}
+                <option value="{{ provider }}" {% if provider == "ollama" %}selected{% endif %}>{{ provider }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label>api_url
+            <input type="url" name="api_url" value="http://localhost:11434/v1/chat/completions" required>
+          </label>
+          <label>model
+            <input type="text" name="model" placeholder="llama3.1" required>
+          </label>
+          <label>timeout_seconds
+            <input type="number" name="timeout_seconds" value="90" min="5" max="300">
+          </label>
+          <label>max_tokens
+            <input type="number" name="max_tokens" value="800" min="64" max="8000">
+          </label>
+          <label>retries
+            <input type="number" name="retries" value="1" min="1" max="5">
+          </label>
+          <label>api_key
+            <input type="password" name="api_key" placeholder="Optionnel selon provider">
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="enabled" checked>
+            Active
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="is_default" {% if not configs %}checked{% endif %}>
+            Par defaut
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="json_mode">
+            JSON strict
+          </label>
+          <label class="full-span">notes
+            <textarea name="notes" rows="2"></textarea>
+          </label>
+        </div>
+        <button type="submit" class="icon-btn icon-add" title="Ajouter configuration" aria-label="Ajouter configuration"></button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Configurations enregistrees</h2>
+      {% if configs %}
+        {% for item in configs %}
+          <article class="pipeline-step">
+            <form method="post" action="{{ url_for('admin_llm_config') }}" class="train-form">
+              <input type="hidden" name="config_id" value="{{ item.config_id }}">
+              <div class="project-head">
+                <h3>{{ item.name }}</h3>
+                <span class="stat-chip">{{ item.provider }} / {{ item.model }}</span>
+              </div>
+              <div class="train-grid">
+                <label>name
+                  <input type="text" name="name" value="{{ item.name }}" required>
+                </label>
+                <label>provider
+                  <select name="provider" required>
+                    {% for provider in provider_options %}
+                      <option value="{{ provider }}" {% if item.provider == provider %}selected{% endif %}>{{ provider }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>api_url
+                  <input type="url" name="api_url" value="{{ item.api_url }}" required>
+                </label>
+                <label>model
+                  <input type="text" name="model" value="{{ item.model }}" required>
+                </label>
+                <label>timeout_seconds
+                  <input type="number" name="timeout_seconds" value="{{ item.timeout_seconds }}" min="5" max="300">
+                </label>
+                <label>max_tokens
+                  <input type="number" name="max_tokens" value="{{ item.max_tokens }}" min="64" max="8000">
+                </label>
+                <label>retries
+                  <input type="number" name="retries" value="{{ item.retries }}" min="1" max="5">
+                </label>
+                <label>api_key
+                  <input type="password" name="api_key" placeholder="{% if item.api_key_configured %}Cle configuree: {{ item.api_key_masked }}{% else %}Optionnel selon provider{% endif %}">
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}>
+                  Active
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="is_default" {% if item.is_default %}checked{% endif %}>
+                  Par defaut
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="json_mode" {% if item.json_mode %}checked{% endif %}>
+                  JSON strict
+                </label>
+                <label class="full-span">notes
+                  <textarea name="notes" rows="2">{{ item.notes }}</textarea>
+                </label>
+              </div>
+              <div class="action-row">
+                <button type="submit" class="icon-btn icon-save" title="Enregistrer" aria-label="Enregistrer"></button>
+              </div>
+            </form>
+            <div class="action-row">
+              <form method="post" action="{{ url_for('admin_llm_config_test', config_id=item.config_id) }}" class="inline-form">
+                <button type="submit" class="ghost-button">Tester</button>
+              </form>
+              {% if not item.is_default and item.enabled %}
+                <form method="post" action="{{ url_for('admin_llm_config_default', config_id=item.config_id) }}" class="inline-form">
+                  <button type="submit" class="ghost-button">Defaut</button>
+                </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('admin_llm_config_delete', config_id=item.config_id) }}" class="inline-form">
+                <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer" aria-label="Supprimer" {% if configs|length <= 1 %}disabled{% endif %}></button>
+              </form>
+            </div>
+            {% if item.updated_at %}
+              <p class="muted-line">Derniere mise a jour: {{ item.updated_at }}</p>
+            {% endif %}
+          </article>
+        {% endfor %}
+      {% else %}
+        <p class="empty">Aucune configuration persistante. La configuration d'environnement reste disponible en secours.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

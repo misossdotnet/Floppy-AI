@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HTML TO MD | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Tools</p>
+      <p class="brand-tag">Conversion</p>
+      <h1>HTML TO MD</h1>
+      <p class="lead">Conversion rapide de fragments HTML en Markdown exploitable par les pipelines de preparation documentaire.</p>
+    </section>
+
+    <section class="card">
+      <form method="post" action="{{ url_for('html_to_md_tool') }}" class="tool-grid">
+        <label>HTML source
+          <textarea name="html_source" rows="18" placeholder="<h1>Titre</h1><p>Contenu...</p>">{{ html_source }}</textarea>
+        </label>
+        <label>Markdown
+          <textarea rows="18" readonly>{{ markdown_result }}</textarea>
+        </label>
+        <button type="submit" class="icon-btn icon-run" title="Convertir" aria-label="Convertir"></button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

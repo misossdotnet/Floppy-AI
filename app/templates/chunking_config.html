@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration Shard-To-Chunk | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Configuration</p>
+      <p class="brand-tag">Datas Warehouse</p>
+      <h1>Configuration Shard-To-Chunk</h1>
+      <p class="lead">Les parametres de chunking sont appliques au moment de la generation depuis les listes de shards.</p>
+    </section>
+
+    <section class="card">
+      <h2>Parametres disponibles</h2>
+      <div class="details-grid">
+        <p><strong>target_tokens:</strong> taille cible d'un chunk.</p>
+        <p><strong>overlap_tokens:</strong> recouvrement entre chunks consecutifs.</p>
+        <p><strong>heading_max_level:</strong> niveau de titre Markdown utilise pour decouper les sections.</p>
+        <p><strong>min_chunk_chars:</strong> taille minimale avant conservation.</p>
+        <p><strong>max_chunk_chars:</strong> garde-fou de taille maximale.</p>
+        <p><strong>metadata:</strong> lineage, navigation et rattachement shard/document.</p>
+      </div>
+      <p class="muted-line">La configuration persistante globale pourra etre ajoutee sans changer les routes de chunking existantes.</p>
+      <a class="ghost-button" href="{{ url_for('projects_shards') }}">Ouvrir les shards</a>
+    </section>
+  </main>
+</body>
+</html>

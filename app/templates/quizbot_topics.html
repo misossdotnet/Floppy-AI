@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sujets QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_config') }}">Configuration QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+      </div>
+      <h1>Sujets QuizBot</h1>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Ajouter un sujet</h2>
+      <form method="post" action="{{ url_for('admin_quizbot_topic_add') }}" class="train-form">
+        <div class="train-grid">
+          <label>Libelle
+            <input type="text" name="label" placeholder="Ex: PostgreSQL" required>
+          </label>
+          <label>Niveau
+            <input type="text" name="level" placeholder="debutant, intermediaire, avance">
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="active" checked>
+            Actif
+          </label>
+          <label class="full-span">Description
+            <textarea name="description" rows="3"></textarea>
+          </label>
+          <label class="full-span">Consignes
+            <textarea name="instructions" rows="4"></textarea>
+          </label>
+        </div>
+        <button type="submit" class="icon-btn icon-add" title="Ajouter sujet" aria-label="Ajouter sujet"></button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>Liste des sujets</h2>
+      {% if topics %}
+        {% for topic in topics %}
+          <div class="pipeline-step">
+            <form method="post" action="{{ url_for('admin_quizbot_topic_update', topic_id=topic.topic_id) }}" class="train-form">
+              <div class="project-head">
+                <h3>{{ topic.label }}</h3>
+                <div class="action-row">
+                  <span class="stat-chip {% if topic.active and not topic.archived %}status-connected{% else %}status-disconnected{% endif %}">
+                    {% if topic.archived %}Archive{% elif topic.active %}Actif{% else %}Inactif{% endif %}
+                  </span>
+                  <code>{{ topic.topic_id }}</code>
+                </div>
+              </div>
+              <div class="train-grid">
+                <label>Libelle
+                  <input type="text" name="label" value="{{ topic.label }}" required>
+                </label>
+                <label>Niveau
+                  <input type="text" name="level" value="{{ topic.level }}">
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="active" {% if topic.active %}checked{% endif %}>
+                  Actif
+                </label>
+                <label class="checkbox-row">
+                  <input type="checkbox" name="archived" {% if topic.archived %}checked{% endif %}>
+                  Archive
+                </label>
+                <label class="full-span">Description
+                  <textarea name="description" rows="3">{{ topic.description }}</textarea>
+                </label>
+                <label class="full-span">Consignes
+                  <textarea name="instructions" rows="4">{{ topic.instructions }}</textarea>
+                </label>
+              </div>
+              <div class="action-row">
+                <button type="submit" class="icon-btn icon-save" title="Enregistrer" aria-label="Enregistrer"></button>
+              </div>
+            </form>
+            <div class="action-row">
+              <form method="post" action="{{ url_for('admin_quizbot_topic_archive', topic_id=topic.topic_id) }}" class="inline-form">
+                <button type="submit" class="ghost-button">Archiver</button>
+              </form>
+              <form method="post" action="{{ url_for('admin_quizbot_topic_delete', topic_id=topic.topic_id) }}" class="inline-form">
+                <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer" aria-label="Supprimer"></button>
+              </form>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="empty">Aucun sujet QuizBot.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

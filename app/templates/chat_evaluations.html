@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat Evaluation | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Datas Warehouse</p>
+      <p class="brand-tag">Chat evaluation</p>
+      <h1>Chat / Chat Evaluation</h1>
+      <p class="lead">Acces aux sessions `{slug}_chat` et aux evaluations `{slug}_chat_evaluation` par projet.</p>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Projets</h2>
+      {% if projects %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Projet</th>
+                <th>Slug</th>
+                <th>Sessions</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for project in projects %}
+                <tr>
+                  <td>{{ project.name }}</td>
+                  <td><code>{{ project.slug }}</code></td>
+                  <td>{{ project.chat_session_count }}</td>
+                  <td>
+                    <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Sessions</a>
+                    <a class="ghost-link" href="{{ url_for('project_chat_dashboard', project_slug=project.slug) }}">Evaluation</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucun projet disponible.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

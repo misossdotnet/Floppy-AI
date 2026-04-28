@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audit QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Audit QuizBot</h1>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Evenements</h2>
+      {% if events %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Type</th>
+                <th>Acteur</th>
+                <th>Session</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in events %}
+                <tr>
+                  <td>{{ event.created_at }}</td>
+                  <td>{{ event.event_type }}</td>
+                  <td>{{ event.actor }}</td>
+                  <td>
+                    {% if event.session_id %}
+                      <a class="ghost-link" href="{{ url_for('admin_quizbot_session_detail', session_id=event.session_id) }}">{{ event.session_id }}</a>
+                    {% else %}
+                      -
+                    {% endif %}
+                  </td>
+                  <td><pre class="compact-pre">{{ event.details_json }}</pre></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucun evenement QuizBot.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

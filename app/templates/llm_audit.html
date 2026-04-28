@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Journal LLM | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Webchat public</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('agentai_docs') }}">AgentAI Docs</a>
+      </div>
+      <h1>Journal d'audit LLM</h1>
+      <p class="lead">Historique des sessions et des echanges avec les moteurs LLM.</p>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Sessions</h2>
+      {% if sessions %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Session</th>
+                <th>Usage</th>
+                <th>Provider</th>
+                <th>Config</th>
+                <th>Modele</th>
+                <th>Status</th>
+                <th>Echanges</th>
+                <th>Debut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for session in sessions %}
+                <tr>
+                  <td><code>{{ session.session_id }}</code></td>
+                  <td>{{ session.purpose }}</td>
+                  <td>{{ session.provider }}</td>
+                  <td>{{ session.config_name or session.config_id or '-' }}</td>
+                  <td>{{ session.model }}</td>
+                  <td>{{ session.status }}</td>
+                  <td>{{ session.exchange_count }}</td>
+                  <td>{{ session.started_at }}</td>
+                  <td>
+                    <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=session.session_id) }}">Ouvrir</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="empty">Aucune session LLM tracee.</p>
+      {% endif %}
+    </section>
+  </main>
+</body>
+</html>

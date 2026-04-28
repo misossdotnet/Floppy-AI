@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration QuizBot | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_topics') }}">Sujets</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">Sessions QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Configuration QuizBot</h1>
+      <p class="lead">QuizBot utilise le registre LLM commun pour la generation et la correction.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if config_error %}
+      <section class="card">
+        <div class="alert error">{{ config_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if llm_config_error %}
+      <section class="card">
+        <div class="alert error">{{ llm_config_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if config %}
+      <section class="card">
+        <h2>Parametres LLM</h2>
+        <form method="post" action="{{ url_for('admin_quizbot_config') }}" class="train-form">
+          <div class="train-grid">
+            <label class="checkbox-row">
+              <input type="checkbox" name="enabled" {% if config.enabled %}checked{% endif %}>
+              Activer QuizBot
+            </label>
+            <label>LLM generation
+              <select name="question_llm_config_id">
+                <option value="" {% if not config.question_llm_config_id %}selected{% endif %}>Configuration LLM par defaut</option>
+                {% for llm_config in llm_configs %}
+                  <option value="{{ llm_config.config_id }}" {% if config.question_llm_config_id == llm_config.config_id %}selected{% endif %}>
+                    {{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>LLM correction
+              <select name="correction_llm_config_id">
+                <option value="" {% if not config.correction_llm_config_id or config.correction_llm_config_id == config.question_llm_config_id %}selected{% endif %}>Meme configuration que generation</option>
+                {% for llm_config in llm_configs %}
+                  <option value="{{ llm_config.config_id }}" {% if config.correction_llm_config_id == llm_config.config_id and config.correction_llm_config_id != config.question_llm_config_id %}selected{% endif %}>
+                    {{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Temperature
+              <input type="number" name="temperature" value="{{ config.temperature }}" min="0" max="2" step="0.1">
+            </label>
+            <label>Max tokens
+              <input type="number" name="max_tokens" value="{{ config.max_tokens }}" min="64" max="8000">
+            </label>
+            <label class="full-span">Prompt systeme generation
+              <textarea name="question_system_prompt" rows="6" required>{{ config.question_system_prompt }}</textarea>
+            </label>
+            <label class="full-span">Prompt systeme correction
+              <textarea name="correction_system_prompt" rows="6" required>{{ config.correction_system_prompt }}</textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-save" title="Enregistrer" aria-label="Enregistrer"></button>
+        </form>
+        {% if config.updated_at %}
+          <p class="muted-line">Derniere mise a jour: {{ config.updated_at }}</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Webchat | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat_sessions') }}">Sessions webchat</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Webchat public</h1>
+      <p class="lead">Activation du webchat public et chaine de traitement dynamique avant et apres l'appel LLM principal. Ce module utilise les tables <code>webchat_*</code>, separees des sessions externes par projet.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if llm_config_error %}
+      <section class="card">
+        <div class="alert error">{{ llm_config_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status public</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Webchat</p>
+            <p class="kpi-value">{% if status.available %}Disponible{% elif payload.config.enabled %}En attente LLM{% else %}Bloque{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if status.llm_connected %}Connecte{% else %}Deconnecte{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Etapes actives</p>
+            <p class="kpi-value">{{ payload.steps | selectattr("enabled") | list | length }}</p>
+          </article>
+        </div>
+        {% if status.db_error %}
+          <div class="alert error">{{ status.db_error }}</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Configuration</h2>
+        <form method="post" action="{{ url_for('admin_webchat_config') }}" class="train-form">
+          <div class="train-grid">
+            <label class="checkbox-row">
+              <input type="checkbox" name="enabled" {% if payload.config.enabled %}checked{% endif %}>
+              Activer le webchat public
+            </label>
+            <label>temperature
+              <input type="number" name="temperature" value="{{ payload.config.temperature }}" min="0" max="2" step="0.1">
+            </label>
+            <label>llm_config_id
+              <select name="llm_config_id">
+                <option value="" {% if not payload.config.llm_config_id %}selected{% endif %}>Configuration par defaut</option>
+                {% for llm_config in llm_configs %}
+                  <option value="{{ llm_config.config_id }}" {% if payload.config.llm_config_id == llm_config.config_id %}selected{% endif %}>
+                    {{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="full-span">system_prompt
+              <textarea name="system_prompt" rows="5" required>{{ payload.config.system_prompt }}</textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-save" title="Enregistrer" aria-label="Enregistrer"></button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Ajouter une etape</h2>
+        <form method="post" action="{{ url_for('admin_webchat_pipeline_add') }}" class="train-form">
+          <div class="train-grid">
+            <label>direction
+              <select name="direction" required>
+                <option value="inbound">Inbound: user -> LLM</option>
+                <option value="outbound">Outbound: LLM -> user</option>
+              </select>
+            </label>
+            <label>type
+              <select name="step_type" required>
+                <option value="llm_transform">LLM transform</option>
+                <option value="llm_guard">LLM guard</option>
+              </select>
+            </label>
+            <label>position
+              <input type="number" name="position" value="100" min="1">
+            </label>
+            <label>llm_config_id
+              <select name="llm_config_id">
+                <option value="">Configuration par defaut</option>
+                {% for llm_config in llm_configs %}
+                  <option value="{{ llm_config.config_id }}">{{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>name
+              <input type="text" name="name" placeholder="Traduction FR, ToxicityTextDetection..." required>
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" name="enabled" checked>
+              Active
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" name="fail_closed" checked>
+              Bloquer si erreur
+            </label>
+            <label class="full-span">prompt_template
+              <textarea name="prompt_template" rows="6" required placeholder="Ex: Traduis en francais ce texte et retourne uniquement la traduction: {input}"></textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-add" title="Ajouter etape" aria-label="Ajouter etape"></button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Pipeline inbound: user -> LLM</h2>
+        {% if payload.inbound_steps %}
+          {% for step in payload.inbound_steps %}
+            {% include "webchat_step_form.html" %}
+          {% endfor %}
+        {% else %}
+          <p class="empty">Aucune etape inbound.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Pipeline outbound: LLM -> user</h2>
+        {% if payload.outbound_steps %}
+          {% for step in payload.outbound_steps %}
+            {% include "webchat_step_form.html" %}
+          {% endfor %}
+        {% else %}
+          <p class="empty">Aucune etape outbound.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

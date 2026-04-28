@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Revue document | Floppy-AI | Datas Warehouse</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page review-page">
+    <section class="hero">
+      <p class="eyebrow">Floppy-AI</p>
+      <p class="brand-tag">Workflow qualite</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_document_review') }}">File de revue</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ payload.document.uuid }}">Chunk-list</a>
+        {% endif %}
+      </div>
+      <h1>Revue document</h1>
+      {% if payload %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / Document: <code>{{ payload.document.uuid }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <div class="project-head">
+          <div>
+            <h2>{{ payload.document.title_document or 'Sans titre' }}</h2>
+            <p class="muted-line">
+              Source: {{ payload.document.source_document or '-' }} |
+              Auteur: {{ payload.document.autor_document or '-' }} |
+              URL: {{ payload.document.url_document or '-' }}
+            </p>
+          </div>
+          <div class="project-stats">
+            <span class="status-badge status-{{ payload.processing.approval_status }}">{{ payload.processing.approval_status }}</span>
+            <span class="stat-chip">Qualite <strong>{{ "%.2f"|format(payload.processing.quality_score or 0) }}</strong></span>
+            <span class="stat-chip"><strong>{{ payload.chunks|length }}</strong> chunk(s)</span>
+            <span class="stat-chip"><strong>{{ payload.annotations|length }}</strong> anomalie(s)</span>
+            <span class="stat-chip"><strong>{{ payload.exclusions|length }}</strong> exclusion(s)</span>
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('project_document_review_normalize', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="inline-form">
+          <button type="submit" class="ghost-button">Normaliser</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Decision de revue</h2>
+        <form method="post" action="{{ url_for('project_document_review_approve', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="review-form">
+          <div class="review-form-grid">
+            <label>Statut
+              <select name="status">
+                <option value="pending" {% if payload.processing.approval_status == 'pending' %}selected{% endif %}>pending</option>
+                <option value="approved" {% if payload.processing.approval_status == 'approved' %}selected{% endif %}>approved</option>
+                <option value="rejected" {% if payload.processing.approval_status == 'rejected' %}selected{% endif %}>rejected</option>
+              </select>
+            </label>
+            <label>Reviewer
+              <input type="text" name="approved_by" value="{{ payload.processing.approved_by or session.get('admin_username', '') }}">
+            </label>
+          </div>
+          <label>Commentaire
+            <textarea name="comment" rows="3">{{ payload.processing.approval_comment or '' }}</textarea>
+          </label>
+          <button type="submit" class="ghost-button">Enregistrer decision</button>
+        </form>
+      </section>
+
+      <section class="review-grid">
+        <article class="card">
+          <h2>Source</h2>
+          <div class="details-grid">
+            <p class="muted-line">UUID: <code>{{ payload.document.uuid }}</code></p>
+            <p class="muted-line">Table: <code>{{ payload.document.shard_table }}</code></p>
+            <p class="muted-line">Projet: <code>{{ payload.document.project_slug }}</code></p>
+          </div>
+          <pre class="document-content">{{ payload.document.content_document or '' }}</pre>
+        </article>
+
+        <article class="card">
+          <h2>Texte normalise</h2>
+          <div class="details-grid">
+            <p class="muted-line">Version: <code>{{ payload.processing.normalization_version or '-' }}</code></p>
+            <p class="muted-line">Sections: <strong>{{ payload.sections|length }}</strong></p>
+            <p class="muted-line">Derniere mise a jour: {{ payload.processing.updated_at or '-' }}</p>
+          </div>
+          <pre class="document-content">{{ payload.processing.normalized_content or '' }}</pre>
+        </article>
+      </section>
+
+      <section class="card">
+        <h2>Sections exclues</h2>
+        <form method="post" action="{{ url_for('project_document_review_exclusion_add', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="review-form">
+          <div class="review-form-grid">
+            <label>Section
+              <select name="section_path" required>
+                <option value="">Choisir une section</option>
+                {% for section in payload.section_options %}
+                  <option value="{{ section.section_path }}">{{ section.section_path }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Reviewer
+              <input type="text" name="excluded_by" value="{{ session.get('admin_username', '') }}">
+            </label>
+          </div>
+          <label>Raison
+            <textarea name="reason" rows="2"></textarea>
+          </label>
+          <button type="submit" class="ghost-button">Exclure section</button>
+        </form>
+
+        {% if payload.exclusions %}
+          <div class="review-list">
+            {% for exclusion in payload.exclusions %}
+              <article class="review-list-item">
+                <div>
+                  <strong>{{ exclusion.section_path }}</strong>
+                  <p class="muted-line">{{ exclusion.reason or '-' }} | {{ exclusion.excluded_by or '-' }}</p>
+                </div>
+                <form method="post" action="{{ url_for('project_document_review_exclusion_delete', project_slug=payload.project.slug, document_id=payload.document.uuid, exclusion_id=exclusion.exclusion_id) }}" class="inline-form">
+                  <button type="submit" class="danger-btn icon-btn icon-delete" title="Retirer exclusion" aria-label="Retirer exclusion"></button>
+                </form>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Aucune section exclue.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Chunks</h2>
+        {% if payload.chunks %}
+          <div class="review-chunks">
+            {% for chunk in payload.chunks %}
+              <article class="review-chunk {% if chunk.excluded %}is-excluded{% endif %}">
+                <div class="review-chunk-head">
+                  <div>
+                    <strong>{{ chunk.title_document or chunk.metadata.section_title or 'Chunk' }}</strong>
+                    <p class="muted-line">
+                      <code>{{ chunk.uuid }}</code> |
+                      Section: {{ chunk.metadata.section_path or '-' }} |
+                      Qualite: {{ "%.2f"|format(chunk.quality_score or 0) }}
+                    </p>
+                  </div>
+                  {% if chunk.excluded %}
+                    <span class="status-badge status-rejected">exclu</span>
+                  {% endif %}
+                </div>
+                <pre class="document-content">{{ chunk.content_document or '' }}</pre>
+                <details>
+                  <summary>Metadonnees chunk</summary>
+                  <pre class="document-content compact-json">{{ chunk.metadata | tojson(indent=2) }}</pre>
+                </details>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Aucun chunk pour ce document.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Anomalies</h2>
+        <form method="post" action="{{ url_for('project_document_review_annotation_add', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="review-form">
+          <div class="review-form-grid">
+            <label>Cible
+              <select name="target_type">
+                <option value="document">document</option>
+                <option value="section">section</option>
+                <option value="chunk">chunk</option>
+              </select>
+            </label>
+            <label>Severite
+              <select name="severity">
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="low">low</option>
+              </select>
+            </label>
+            <label>Section
+              <select name="section_path">
+                <option value="">-</option>
+                {% for section in payload.section_options %}
+                  <option value="{{ section.section_path }}">{{ section.section_path }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Chunk cible
+              <select name="target_id">
+                <option value="">-</option>
+                {% for chunk in payload.chunks %}
+                  <option value="{{ chunk.uuid }}">{{ chunk.uuid }} / {{ chunk.metadata.section_title or '-' }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Reviewer
+              <input type="text" name="created_by" value="{{ session.get('admin_username', '') }}">
+            </label>
+          </div>
+          <label>Note
+            <textarea name="note" rows="3" required></textarea>
+          </label>
+          <button type="submit" class="ghost-button">Annoter anomalie</button>
+        </form>
+
+        {% if payload.annotations %}
+          <div class="review-list">
+            {% for annotation in payload.annotations %}
+              <article class="review-list-item">
+                <div>
+                  <strong>{{ annotation.severity }} / {{ annotation.target_type }}</strong>
+                  <p class="muted-line">
+                    {% if annotation.section_path %}Section: {{ annotation.section_path }} | {% endif %}
+                    {% if annotation.target_id %}Cible: <code>{{ annotation.target_id }}</code> | {% endif %}
+                    {{ annotation.created_by or '-' }} | {{ annotation.created_at or '-' }}
+                  </p>
+                  <p>{{ annotation.note }}</p>
+                </div>
+                <form method="post" action="{{ url_for('project_document_review_annotation_delete', project_slug=payload.project.slug, document_id=payload.document.uuid, annotation_id=annotation.annotation_id) }}" class="inline-form">
+                  <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer annotation" aria-label="Supprimer annotation"></button>
+                </form>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Aucune anomalie annotee.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Metadonnees</h2>
+        <pre class="document-content compact-json">{{ payload.metadata | tojson(indent=2) }}</pre>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

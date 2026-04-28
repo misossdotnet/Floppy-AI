@@ -1,0 +1,55 @@
+<article class="pipeline-step">
+  <form method="post" action="{{ url_for('admin_webchat_pipeline_update', step_id=step.step_id) }}" class="train-form">
+    <div class="project-head">
+      <h3>{{ step.name }}</h3>
+      <span class="stat-chip">{{ step.direction }} / {{ step.step_type }}</span>
+    </div>
+    <div class="train-grid">
+      <label>direction
+        <select name="direction" required>
+          <option value="inbound" {% if step.direction == "inbound" %}selected{% endif %}>Inbound: user -> LLM</option>
+          <option value="outbound" {% if step.direction == "outbound" %}selected{% endif %}>Outbound: LLM -> user</option>
+        </select>
+      </label>
+      <label>type
+        <select name="step_type" required>
+          <option value="llm_transform" {% if step.step_type == "llm_transform" %}selected{% endif %}>LLM transform</option>
+          <option value="llm_guard" {% if step.step_type == "llm_guard" %}selected{% endif %}>LLM guard</option>
+        </select>
+      </label>
+      <label>position
+        <input type="number" name="position" value="{{ step.position }}" min="1">
+      </label>
+      <label>llm_config_id
+        <select name="llm_config_id">
+          <option value="" {% if not step.llm_config_id %}selected{% endif %}>Configuration par defaut</option>
+          {% for llm_config in llm_configs %}
+            <option value="{{ llm_config.config_id }}" {% if step.llm_config_id == llm_config.config_id %}selected{% endif %}>
+              {{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>name
+        <input type="text" name="name" value="{{ step.name }}" required>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="enabled" {% if step.enabled %}checked{% endif %}>
+        Active
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="fail_closed" {% if step.fail_closed %}checked{% endif %}>
+        Bloquer si erreur
+      </label>
+      <label class="full-span">prompt_template
+        <textarea name="prompt_template" rows="6" required>{{ step.prompt_template }}</textarea>
+      </label>
+    </div>
+    <div class="action-row">
+      <button type="submit" class="icon-btn icon-save" title="Enregistrer etape" aria-label="Enregistrer etape"></button>
+    </div>
+  </form>
+  <form method="post" action="{{ url_for('admin_webchat_pipeline_delete', step_id=step.step_id) }}" class="inline-form">
+    <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer etape" aria-label="Supprimer etape"></button>
+  </form>
+</article>
