@@ -25,21 +25,62 @@ services:
     volumes:
       - app_datas:/app
     environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_ENABLE_UI: ${APP_ENABLE_UI:-true}
+      APP_ENABLE_API: ${APP_ENABLE_API:-true}
+      APP_ENABLE_MCP: ${APP_ENABLE_MCP:-true}
+      FLASK_DEBUG: ${FLASK_DEBUG:-true}
       FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-change-this-secret}
-      POSTGRES_HOST: dataswarehouse-db
+      FLOPPY_REQUIRE_AUTH: ${FLOPPY_REQUIRE_AUTH:-false}
+      FLOPPY_AUTH_TOKENS: ${FLOPPY_AUTH_TOKENS:-dev-token:admin}
+      FLOPPY_ADMIN_USERNAME: ${FLOPPY_ADMIN_USERNAME:-admin}
+      FLOPPY_ADMIN_PASSWORD: ${FLOPPY_ADMIN_PASSWORD:-admin}
+      POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-dataswarehouse}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_API_URL: ${LLM_API_URL:-http://localhost:11434/v1/chat/completions}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-90}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-800}
+      LLM_RETRIES: ${LLM_RETRIES:-1}
+      LLM_JSON_MODE: ${LLM_JSON_MODE:-false}
+      AGENTAI_LLM_PROVIDER: ${AGENTAI_LLM_PROVIDER:-}
+      AGENTAI_LLM_API_URL: ${AGENTAI_LLM_API_URL:-}
+      AGENTAI_LLM_API_KEY: ${AGENTAI_LLM_API_KEY:-}
+      AGENTAI_LLM_MODEL: ${AGENTAI_LLM_MODEL:-}
+      AGENTAI_LLM_TIMEOUT: ${AGENTAI_LLM_TIMEOUT:-90}
+      AGENTAI_LLM_MAX_TOKENS: ${AGENTAI_LLM_MAX_TOKENS:-800}
+      AGENTAI_LLM_RETRIES: ${AGENTAI_LLM_RETRIES:-1}
+      AGENTAI_LLM_JSON_MODE: ${AGENTAI_LLM_JSON_MODE:-false}
     depends_on:
-      dataswarehouse-db:
+      db:
         condition: service_healthy
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
-             gunicorn --bind 0.0.0.0:8000 app:app"
+             uvicorn asgi:app --host 0.0.0.0 --port 8000"
     ports:
       - "8000:8000"
+
+  dataswarehouse-ollama:
+    image: ollama/ollama:latest
+    container_name: aidataswarehouse-ollama
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Paris
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-your_api_key}
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: -1  # Garder les modèles en mémoire indéfiniment
+      OLLAMA_MODEL: ${N8N_OLLAMA_MODEL:-mistral:7b}      # Nom du modèle : qwen3:4b / qwen3:8b / llama3.1:8b / llama3.2:3b / mistral:7b
+    volumes:
+      - ollama_datas:/root/.ollama
+#    ports:
+#      - "11434:11434"   # API Ollama
 
 volumes:
   postgres_datas:
   app_datas:
+  ollama_datas: 
