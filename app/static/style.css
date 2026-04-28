@@ -158,6 +158,54 @@ body::before {
   cursor: pointer;
 }
 
+.nav-session {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--chip-bg);
+}
+
+.nav-session span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.nav-session span i {
+  color: var(--accent);
+}
+
+.nav-session form {
+  margin: 0;
+}
+
+.nav-session button {
+  width: 34px;
+  height: 34px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--nav-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.nav-session button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .nav-block {
   display: grid;
   gap: 4px;
@@ -936,6 +984,27 @@ button.icon-dialogue::before {
 .compact-json {
   max-height: 320px;
   font-size: 0.82rem;
+}
+
+.vector-inline-form {
+  display: grid;
+  gap: 8px;
+  min-width: 360px;
+}
+
+.vector-inline-form label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.vector-inline-form input[type="number"] {
+  width: 92px;
+  padding: 7px 9px;
+  border: 1px solid var(--field-line);
+  border-radius: 8px;
+  background: var(--field-bg);
+  color: var(--text);
+  font-family: var(--font-sans);
 }
 
 @media (max-width: 720px) {

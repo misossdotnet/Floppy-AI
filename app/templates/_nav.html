@@ -6,8 +6,11 @@
   })();
 </script>
 
+{% set show_admin_menu = admin_authenticated|default(false) or session.get("admin_authenticated", false) %}
+{% set nav_username = admin_username|default(session.get("admin_username", ""), true) %}
+
 <nav class="app-nav" aria-label="Navigation principale">
-  <a class="app-brand" href="{% if admin_authenticated %}{{ url_for('admin_dashboard') }}{% else %}{{ url_for('home') }}{% endif %}">
+  <a class="app-brand" href="{% if show_admin_menu %}{{ url_for('admin_dashboard') }}{% else %}{{ url_for('home') }}{% endif %}">
     <i class="fa-solid fa-database" aria-hidden="true"></i>
     <span>
       <strong>Floppy-AI</strong>
@@ -20,7 +23,16 @@
     <span>Theme</span>
   </button>
 
-  {% if admin_authenticated %}
+  {% if show_admin_menu %}
+    <div class="nav-session" aria-label="Session admin">
+      <span><i class="fa-solid fa-user-shield" aria-hidden="true"></i>{{ nav_username or "admin" }}</span>
+      <form method="post" action="{{ url_for('admin_logout') }}">
+        <button type="submit" title="Se deconnecter" aria-label="Se deconnecter">
+          <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+        </button>
+      </form>
+    </div>
+
     <div class="nav-block">
       <p class="nav-title">Datas Warehouse</p>
       <a href="{{ url_for('projects_shards') }}"><i class="fa-solid fa-layer-group" aria-hidden="true"></i>Shard</a>
@@ -43,12 +55,14 @@
       <p class="nav-title">Configuration</p>
       <a href="{{ url_for('admin_chunking_config') }}"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>Configuration Shard-To-Chunk</a>
       <a href="{{ url_for('admin_llm_config') }}"><i class="fa-solid fa-microchip" aria-hidden="true"></i>Configuration LLM</a>
+      <a href="{{ url_for('admin_vectorization') }}"><i class="fa-solid fa-vector-square" aria-hidden="true"></i>Configuration Vectorisation</a>
       <a href="{{ url_for('admin_webchat') }}"><i class="fa-solid fa-comments-dollar" aria-hidden="true"></i>Configuration WebChat</a>
       <a href="{{ url_for('admin_quizbot_config') }}"><i class="fa-solid fa-list-check" aria-hidden="true"></i>Configuration QuizBot</a>
     </div>
   {% else %}
     <div class="nav-block">
       <p class="nav-title">Public</p>
+      <a href="{{ url_for('admin_login') }}"><i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i>Connexion admin</a>
       <a href="{{ url_for('public_webchat') }}"><i class="fa-solid fa-comment-dots" aria-hidden="true"></i>WebChat</a>
       <a href="{{ url_for('public_quizbot') }}"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>QuizBot</a>
     </div>

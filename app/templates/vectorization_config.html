@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vectorisation | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Configuration</p>
+      <p class="brand-tag">pgvector</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Vue shards/chunks</a>
+      </div>
+      <h1>Vectorisation des donnees</h1>
+      <p class="lead">Configuration du moteur d'embeddings et suivi pgvector des tables shard, chunk et train.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status vectorisation</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Etat</p>
+            <p class="kpi-value">{% if payload.status.configured %}Configure{% elif payload.status.enabled %}Incomplet{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM embeddings</p>
+            <p class="kpi-value">{{ payload.status.llm_config_id or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ payload.status.embedding_model or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Dimensions</p>
+            <p class="kpi-value">{{ payload.status.embedding_dimensions }}</p>
+          </article>
+        </div>
+        {% if payload.status.error %}
+          <div class="alert error">{{ payload.status.error }}</div>
+        {% endif %}
+        <p class="muted-line">Endpoint embeddings: <code>{{ payload.status.embedding_api_url or '-' }}</code></p>
+      </section>
+
+      <section class="card">
+        <h2>Configuration embeddings</h2>
+        <form method="post" action="{{ url_for('admin_vectorization') }}" class="train-form">
+          <div class="train-grid">
+            <label>Configuration LLM dediee
+              <select name="llm_config_id">
+                <option value="" {% if not payload.config.llm_config_id %}selected{% endif %}>Aucune</option>
+                {% for llm_config in payload.llm_configs %}
+                  <option value="{{ llm_config.config_id }}" {% if payload.config.llm_config_id == llm_config.config_id %}selected{% endif %}>
+                    {{ llm_config.name }} ({{ llm_config.provider }} / {{ llm_config.model }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>embedding_api_url
+              <input type="url" name="embedding_api_url" value="{{ payload.config.embedding_api_url }}" placeholder="Derive automatiquement depuis l'URL LLM">
+            </label>
+            <label>embedding_model
+              <input type="text" name="embedding_model" value="{{ payload.config.embedding_model }}" placeholder="Par defaut: modele de la configuration LLM">
+            </label>
+            <label>embedding_dimensions
+              <input type="number" name="embedding_dimensions" value="{{ payload.config.embedding_dimensions }}" min="1" max="16000">
+            </label>
+            <label>batch_size
+              <input type="number" name="batch_size" value="{{ payload.config.batch_size }}" min="1" max="500">
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" name="enabled" {% if payload.config.enabled %}checked{% endif %}>
+              Activer la vectorisation
+            </label>
+            <label class="full-span">notes
+              <textarea name="notes" rows="2">{{ payload.config.notes }}</textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-save" title="Enregistrer configuration" aria-label="Enregistrer configuration"></button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Test embeddings</h2>
+        <form method="post" action="{{ url_for('admin_vectorization_test') }}" class="train-form">
+          <label>Texte de test
+            <textarea name="test_text" rows="3">Test de vectorisation Floppy-AI.</textarea>
+          </label>
+          <button type="submit" class="ghost-button">Tester la vectorisation</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Tables projet pgvector</h2>
+        {% if payload.projects %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Projet</th>
+                  <th>Shard</th>
+                  <th>Chunk</th>
+                  <th>Train</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for project in payload.projects %}
+                  <tr>
+                    <td>
+                      <strong>{{ project.name }}</strong><br>
+                      <code>{{ project.slug }}</code>
+                    </td>
+                    <td>{{ project.shard.embedded }}/{{ project.shard.total }}<br><span class="muted-line">{{ project.shard.errors }} erreur(s)</span></td>
+                    <td>{{ project.chunk.embedded }}/{{ project.chunk.total }}<br><span class="muted-line">{{ project.chunk.errors }} erreur(s)</span></td>
+                    <td>{{ project.train.embedded }}/{{ project.train.total }}<br><span class="muted-line">{{ project.train.errors }} erreur(s)</span></td>
+                    <td>
+                      <form method="post" action="{{ url_for('project_vectorize', project_slug=project.slug) }}" class="vector-inline-form">
+                        <div class="action-row">
+                          <label class="checkbox-row"><input type="checkbox" name="targets" value="shard" checked>Shard</label>
+                          <label class="checkbox-row"><input type="checkbox" name="targets" value="chunk" checked>Chunk</label>
+                          <label class="checkbox-row"><input type="checkbox" name="targets" value="train" checked>Train</label>
+                        </div>
+                        <div class="action-row">
+                          <label>Limite
+                            <input type="number" name="limit" value="{{ payload.config.batch_size }}" min="1" max="1000">
+                          </label>
+                          <label class="checkbox-row"><input type="checkbox" name="missing_only" checked>Manquants seuls</label>
+                          <button type="submit" class="ghost-button">Vectoriser</button>
+                        </div>
+                      </form>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun projet disponible.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

@@ -48,6 +48,12 @@ from quizbot import (
     update_quizbot_topic,
 )
 from tools import html_to_markdown
+from vectorization import (
+    get_vectorization_admin_payload,
+    save_vectorization_config,
+    test_vectorization_config,
+    vectorize_project_data,
+)
 
 
 ADMIN_UI_ENDPOINTS = {
@@ -79,6 +85,8 @@ ADMIN_UI_ENDPOINTS = {
     "admin_chat_evaluations",
     "admin_faq",
     "admin_chunking_config",
+    "admin_vectorization",
+    "admin_vectorization_test",
     "admin_document_review",
     "html_to_md_tool",
     "add_project",
@@ -102,6 +110,7 @@ ADMIN_UI_ENDPOINTS = {
     "project_document_review_annotation_delete",
     "project_document_review_exclusion_add",
     "project_document_review_exclusion_delete",
+    "project_vectorize",
     "add_chunk_item",
     "remove_chunk_item",
     "project_chat_list",
@@ -123,7 +132,11 @@ def register_ui_routes(app):
     @app.context_processor
     def inject_auth_context():
         """Expose UI authentication state to templates."""
-        return {"admin_authenticated": is_admin_authenticated()}
+        authenticated = is_admin_authenticated()
+        return {
+            "admin_authenticated": authenticated,
+            "admin_username": session.get("admin_username", "") if authenticated else "",
+        }
 
 
     @app.before_request
@@ -774,6 +787,63 @@ def register_ui_routes(app):
     def admin_chunking_config():
         """Render shard-to-chunk configuration guidance."""
         return render_template("chunking_config.html")
+
+
+    @app.route("/admin/vectorization", methods=["GET", "POST"])
+    def admin_vectorization():
+        """Render and update pgvector/embedding configuration."""
+        if request.method == "POST":
+            try:
+                save_vectorization_config(request.form.to_dict())
+                flash("Configuration vectorisation enregistree.", "success")
+                return redirect(url_for("admin_vectorization"))
+            except ValueError as exc:
+                flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+            except Exception as exc:
+                flash_internal_error("admin_vectorization_save", exc, prefix="Erreur configuration vectorisation.")
+
+        try:
+            payload = get_vectorization_admin_payload()
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_vectorization", exc)
+        return render_template("vectorization_config.html", payload=payload, db_error=db_error)
+
+
+    @app.post("/admin/vectorization/test")
+    def admin_vectorization_test():
+        """Test the configured embedding endpoint."""
+        try:
+            result = test_vectorization_config(request.form.get("test_text", ""))
+            flash(
+                f"Test vectorisation OK: {result['embedding_dimensions']} dimensions via {result['embedding_model']}.",
+                "success",
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_vectorization_test", exc, prefix="Erreur test vectorisation.")
+        return redirect(url_for("admin_vectorization"))
+
+
+    @app.post("/projects/<project_slug>/vectorize")
+    @require_scopes("write")
+    def project_vectorize(project_slug):
+        """Run a vectorization batch on one project."""
+        try:
+            form_payload = request.form.to_dict()
+            form_payload["targets"] = request.form.getlist("targets")
+            result = vectorize_project_data(project_slug, form_payload)
+            flash(
+                f"Vectorisation {project_slug}: {result['embedded']} embedding(s) sur {result['processed']} ligne(s).",
+                "success" if not result["errors"] else "error",
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("project_vectorize", exc, prefix="Erreur vectorisation projet.")
+        return redirect(url_for("admin_vectorization"))
 
 
     @app.get("/admin/document-review")

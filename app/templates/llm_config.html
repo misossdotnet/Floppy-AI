@@ -181,7 +181,7 @@
               </div>
             </form>
             <div class="action-row">
-              <form method="post" action="{{ url_for('admin_llm_config_test', config_id=item.config_id) }}" class="inline-form">
+              <form method="post" action="/admin/llm/{{ item.config_id }}/test" class="inline-form">
                 <button type="submit" class="ghost-button">Tester</button>
               </form>
               {% if not item.is_default and item.enabled %}
