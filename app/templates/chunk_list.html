@@ -70,6 +70,7 @@
                   <th>UUID</th>
                   <th>Shard ID</th>
                   <th>Titre</th>
+                  <th>Type</th>
                   <th>Source</th>
                   <th>Apercu</th>
                   <th>Actions</th>
@@ -82,6 +83,10 @@
                       <td><code>{{ chunk.uuid }}</code></td>
                       <td><code>{{ chunk.shard_id }}</code></td>
                       <td>{{ chunk.title_document or '-' }}</td>
+                      <td>
+                        <span class="stat-chip">{{ chunk.metadata.chunk_type or 'markdown' }}</span><br>
+                        <span class="muted-line">{{ chunk.metadata.chunking_method or 'deterministic' }}</span>
+                      </td>
                       <td>{{ chunk.source_document or '-' }}</td>
                       <td>
                         {% set chunk_preview = (chunk.content_document or '').strip() %}

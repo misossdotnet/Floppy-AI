@@ -6,6 +6,7 @@ from agentai_docs import (
     save_agentai_documents,
 )
 from llm_gateway import (
+    LLM_PROFILE_TYPES,
     delete_llm_config,
     effective_llm_config,
     list_llm_audit_sessions,
@@ -47,6 +48,10 @@ from quizbot import (
     submit_quiz_feedback,
     update_quizbot_topic,
 )
+from shard_to_chunk_llm import (
+    generate_chunks_with_llm,
+    get_shard_to_chunk_payload,
+)
 from tools import html_to_markdown
 from vectorization import (
     get_vectorization_admin_payload,
@@ -85,6 +90,7 @@ ADMIN_UI_ENDPOINTS = {
     "admin_chat_evaluations",
     "admin_faq",
     "admin_chunking_config",
+    "admin_shard_to_chunk_generate",
     "admin_vectorization",
     "admin_vectorization_test",
     "admin_document_review",
@@ -298,6 +304,7 @@ def register_ui_routes(app):
             "llm_config.html",
             config=active_config,
             configs=configs,
+            profile_options=LLM_PROFILE_TYPES,
             status=status,
             config_error=config_error,
         )
@@ -784,9 +791,43 @@ def register_ui_routes(app):
 
 
     @app.get("/admin/chunking-config")
+    @app.get("/admin/shard-to-chunk")
     def admin_chunking_config():
-        """Render shard-to-chunk configuration guidance."""
-        return render_template("chunking_config.html")
+        """Render the Shard-To-Chunk module."""
+        selected_project = (request.args.get("project") or "").strip()
+        selected_shard = (request.args.get("shard") or "").strip()
+        try:
+            payload = get_shard_to_chunk_payload(selected_project, selected_shard)
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_chunking_config", exc)
+        return render_template("chunking_config.html", payload=payload, db_error=db_error)
+
+
+    @app.post("/admin/shard-to-chunk/generate")
+    @require_scopes("write")
+    def admin_shard_to_chunk_generate():
+        """Generate chunks for one shard with an LLM profile."""
+        form_payload = request.form.to_dict()
+        project_slug = (form_payload.get("project_slug") or "").strip()
+        shard_id = (form_payload.get("shard_id") or "").strip()
+        try:
+            result = generate_chunks_with_llm(
+                project_slug,
+                shard_id,
+                form_payload,
+                actor=session.get("admin_username", "admin"),
+            )
+            flash(
+                f"Shard-To-Chunk LLM termine: {result['generated_chunks']} chunk(s) genere(s).",
+                "success",
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_shard_to_chunk_generate", exc, prefix="Erreur Shard-To-Chunk LLM.")
+        return redirect(url_for("admin_chunking_config", project=project_slug, shard=shard_id))
 
 
     @app.route("/admin/vectorization", methods=["GET", "POST"])

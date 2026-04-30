@@ -36,10 +36,25 @@ DEFAULT_PROVIDER_URLS = {
     "openai_compatible": "",
     "custom": "",
 }
+MIN_TIMEOUT_SECONDS = 5
+MAX_TIMEOUT_SECONDS = 360
+LLM_PROFILE_TYPES = (
+    "general",
+    "chunk",
+    "trunk",
+    "ocr",
+    "chat",
+    "embedding",
+    "webchat",
+    "quiz",
+    "agent",
+    "custom",
+)
 LOGGER = logging.getLogger("floppy_ai")
 LLM_CONFIG_SELECT_COLUMNS = """
     id, config_id, provider, api_url, api_key, model, timeout_seconds, enabled,
-    created_at, updated_at, name, is_default, max_tokens, retries, json_mode, notes
+    created_at, updated_at, name, is_default, max_tokens, retries, json_mode, notes,
+    profile_type
 """
 
 
@@ -101,7 +116,7 @@ def normalize_timeout(raw_timeout, default=90):
         timeout = int(raw_timeout)
     except (TypeError, ValueError):
         timeout = default
-    return min(max(timeout, 5), 300)
+    return min(max(timeout, MIN_TIMEOUT_SECONDS), MAX_TIMEOUT_SECONDS)
 
 
 def normalize_retries(raw_retries, default=1):
@@ -162,6 +177,13 @@ def normalize_config_name(raw_name, provider, model):
     return f"{provider_label} / {model_label}"[:120]
 
 
+def normalize_profile_type(raw_profile_type):
+    """Normalize the module profile attached to one LLM configuration."""
+    profile_type = str(raw_profile_type or "general").strip().lower()
+    profile_type = re.sub(r"[^a-z0-9_-]+", "_", profile_type).strip("_")
+    return profile_type or "general"
+
+
 def normalize_checkbox(payload, key, default=False):
     """Normalize HTML form checkboxes and boolean payload values."""
     value = payload.get(key) if isinstance(payload, dict) else None
@@ -194,6 +216,7 @@ def serialize_llm_config_row(row, redact_key=False):
         "retries": normalize_retries(row[13]),
         "json_mode": bool(row[14]),
         "notes": row[15] or "",
+        "profile_type": normalize_profile_type(row[16] if len(row) > 16 else "general"),
         "source": "database",
         "configured": bool(api_url and model and row[7]),
     }
@@ -228,6 +251,14 @@ def ensure_llm_tables(cur):
     cur.execute("ALTER TABLE public.llm_config ADD COLUMN IF NOT EXISTS retries integer NOT NULL DEFAULT 1;")
     cur.execute("ALTER TABLE public.llm_config ADD COLUMN IF NOT EXISTS json_mode boolean NOT NULL DEFAULT false;")
     cur.execute("ALTER TABLE public.llm_config ADD COLUMN IF NOT EXISTS notes text NOT NULL DEFAULT '';")
+    cur.execute("ALTER TABLE public.llm_config ADD COLUMN IF NOT EXISTS profile_type text NOT NULL DEFAULT 'general';")
+    cur.execute(
+        """
+        UPDATE public.llm_config
+        SET profile_type = 'general'
+        WHERE profile_type IS NULL OR profile_type = '';
+        """
+    )
     cur.execute(
         """
         UPDATE public.llm_config
@@ -377,6 +408,7 @@ def env_llm_config():
         "enabled": True,
         "is_default": True,
         "notes": "",
+        "profile_type": "general",
         "source": "environment",
         "configured": bool(api_url and model),
         "created_at": None,
@@ -473,6 +505,7 @@ def effective_llm_config(redact_key=False, config_id=""):
                 "enabled": False,
                 "is_default": False,
                 "notes": "",
+                "profile_type": "general",
                 "source": "database",
                 "configured": False,
                 "created_at": None,
@@ -508,6 +541,7 @@ def save_llm_config(payload):
     enabled = normalize_checkbox(payload, "enabled", default=False)
     is_default = normalize_checkbox(payload, "is_default", default=False)
     notes = str(payload.get("notes") or "").strip()
+    profile_type = normalize_profile_type(payload.get("profile_type"))
 
     if not api_url:
         raise ValueError("Le champ api_url est obligatoire.")
@@ -553,6 +587,7 @@ def save_llm_config(payload):
                         retries = %s,
                         json_mode = %s,
                         notes = %s,
+                        profile_type = %s,
                         updated_at = now()
                     WHERE config_id = %s;
                     """,
@@ -569,6 +604,7 @@ def save_llm_config(payload):
                         retries,
                         json_mode,
                         notes,
+                        profile_type,
                         config_id,
                     ),
                 )
@@ -581,9 +617,9 @@ def save_llm_config(payload):
                         (
                             id, config_id, name, provider, api_url, api_key, model,
                             timeout_seconds, enabled, is_default, max_tokens,
-                            retries, json_mode, notes, updated_at
+                            retries, json_mode, notes, profile_type, updated_at
                         )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now());
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now());
                     """,
                     (
                         next_id,
@@ -600,6 +636,7 @@ def save_llm_config(payload):
                         retries,
                         json_mode,
                         notes,
+                        profile_type,
                     ),
                 )
             cur.execute("SELECT COUNT(*) FROM public.llm_config WHERE is_default = true;")
@@ -1027,6 +1064,7 @@ def normalize_runtime_config(config):
     resolved["max_tokens"] = normalize_max_tokens(resolved.get("max_tokens"))
     resolved["retries"] = normalize_retries(resolved.get("retries"))
     resolved["json_mode"] = bool(resolved.get("json_mode"))
+    resolved["profile_type"] = normalize_profile_type(resolved.get("profile_type"))
     enabled = resolved.get("enabled", True)
     if isinstance(enabled, bool):
         resolved["enabled"] = enabled

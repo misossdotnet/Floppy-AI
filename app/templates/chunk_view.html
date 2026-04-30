@@ -66,6 +66,11 @@
           <p class="muted-line">Source: {{ chunk.source_document or '-' }}</p>
           <p class="muted-line">URL: {{ chunk.url_document or '-' }}</p>
           <p class="muted-line">Auteur: {{ chunk.autor_document or '-' }}</p>
+          <p class="muted-line">Type: {{ chunk.metadata.chunk_type or 'markdown' }}</p>
+          <p class="muted-line">Chunking: {{ chunk.metadata.chunking_method or 'deterministic' }}</p>
+          {% if chunk.metadata.llm_config_id %}
+            <p class="muted-line">LLM: <code>{{ chunk.metadata.llm_config_id }}</code> / {{ chunk.metadata.llm_profile_type or 'general' }}</p>
+          {% endif %}
         </div>
       </section>
 

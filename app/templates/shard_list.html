@@ -48,6 +48,7 @@
         <div class="action-row">
           <a class="ghost-link" href="{{ url_for('project_shard_new', project_slug=payload.project.slug) }}">Nouveau shard</a>
           <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=payload.project.slug) }}">Nouveau chunk</a>
+          <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ payload.project.slug }}">Shard-To-Chunk LLM</a>
           <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ payload.project.slug }}">Revue documents</a>
         </div>
       </section>

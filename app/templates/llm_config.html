@@ -9,6 +9,7 @@
 <body>
   {% include "_nav.html" %}
   {% set provider_options = ["ollama", "litellm", "openai", "lmstudio", "openai_compatible", "custom"] %}
+  {% set llm_profile_options = profile_options or ["general", "chunk", "trunk", "ocr", "chat", "embedding", "webchat", "quiz", "agent", "custom"] %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
@@ -82,6 +83,13 @@
               {% endfor %}
             </select>
           </label>
+          <label>profile_type
+            <select name="profile_type">
+              {% for profile in llm_profile_options %}
+                <option value="{{ profile }}" {% if profile == "general" %}selected{% endif %}>{{ profile }}</option>
+              {% endfor %}
+            </select>
+          </label>
           <label>api_url
             <input type="url" name="api_url" value="http://localhost:11434/v1/chat/completions" required>
           </label>
@@ -89,7 +97,7 @@
             <input type="text" name="model" placeholder="llama3.1" required>
           </label>
           <label>timeout_seconds
-            <input type="number" name="timeout_seconds" value="90" min="5" max="300">
+            <input type="number" name="timeout_seconds" value="90" min="5" max="360">
           </label>
           <label>max_tokens
             <input type="number" name="max_tokens" value="800" min="64" max="8000">
@@ -129,7 +137,7 @@
               <input type="hidden" name="config_id" value="{{ item.config_id }}">
               <div class="project-head">
                 <h3>{{ item.name }}</h3>
-                <span class="stat-chip">{{ item.provider }} / {{ item.model }}</span>
+                <span class="stat-chip">{{ item.profile_type or "general" }} / {{ item.provider }} / {{ item.model }}</span>
               </div>
               <div class="train-grid">
                 <label>name
@@ -142,6 +150,13 @@
                     {% endfor %}
                   </select>
                 </label>
+                <label>profile_type
+                  <select name="profile_type">
+                    {% for profile in llm_profile_options %}
+                      <option value="{{ profile }}" {% if (item.profile_type or "general") == profile %}selected{% endif %}>{{ profile }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
                 <label>api_url
                   <input type="url" name="api_url" value="{{ item.api_url }}" required>
                 </label>
@@ -149,7 +164,7 @@
                   <input type="text" name="model" value="{{ item.model }}" required>
                 </label>
                 <label>timeout_seconds
-                  <input type="number" name="timeout_seconds" value="{{ item.timeout_seconds }}" min="5" max="300">
+                  <input type="number" name="timeout_seconds" value="{{ item.timeout_seconds }}" min="5" max="360">
                 </label>
                 <label>max_tokens
                   <input type="number" name="max_tokens" value="{{ item.max_tokens }}" min="64" max="8000">

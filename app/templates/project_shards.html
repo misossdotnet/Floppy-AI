@@ -57,6 +57,7 @@
           <p class="muted-line">
             <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Ouvrir Chat-list</a>
             <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Ouvrir revue documents</a>
+            <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ project.slug }}">Shard-To-Chunk LLM</a>
           </p>
 
           <form method="post" action="{{ url_for('chunkify_project', project_slug=project.slug) }}" class="chunk-form">

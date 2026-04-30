@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Configuration Shard-To-Chunk | Floppy-AI</title>
+  <title>Shard-To-Chunk | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -12,23 +12,174 @@
     <section class="hero compact-hero">
       <p class="eyebrow">Configuration</p>
       <p class="brand-tag">Datas Warehouse</p>
-      <h1>Configuration Shard-To-Chunk</h1>
-      <p class="lead">Les parametres de chunking sont appliques au moment de la generation depuis les listes de shards.</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shards</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Shard-To-Chunk</h1>
+      <p class="lead">Generation de chunks deterministe ou assistee par une configuration LLM typee.</p>
     </section>
 
-    <section class="card">
-      <h2>Parametres disponibles</h2>
-      <div class="details-grid">
-        <p><strong>target_tokens:</strong> taille cible d'un chunk.</p>
-        <p><strong>overlap_tokens:</strong> recouvrement entre chunks consecutifs.</p>
-        <p><strong>heading_max_level:</strong> niveau de titre Markdown utilise pour decouper les sections.</p>
-        <p><strong>min_chunk_chars:</strong> taille minimale avant conservation.</p>
-        <p><strong>max_chunk_chars:</strong> garde-fou de taille maximale.</p>
-        <p><strong>metadata:</strong> lineage, navigation et rattachement shard/document.</p>
-      </div>
-      <p class="muted-line">La configuration persistante globale pourra etre ajoutee sans changer les routes de chunking existantes.</p>
-      <a class="ghost-button" href="{{ url_for('projects_shards') }}">Ouvrir les shards</a>
-    </section>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Selection</h2>
+        <form method="get" action="{{ url_for('admin_chunking_config') }}" class="train-form">
+          <div class="train-grid">
+            <label>project
+              <select name="project" onchange="this.form.submit()">
+                {% for project in payload.projects %}
+                  <option value="{{ project.slug }}" {% if payload.selected_project == project.slug %}selected{% endif %}>
+                    {{ project.name }} ({{ project.slug }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>shard
+              <select name="shard" onchange="this.form.submit()">
+                {% for shard in payload.shards %}
+                  <option value="{{ shard.uuid }}" {% if payload.selected_shard == shard.uuid %}selected{% endif %}>
+                    {{ shard.title_document or shard.source_document or shard.uuid }} - {{ shard.chunk_count }} chunk(s)
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+          <button type="submit" class="ghost-button">Charger</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Generation LLM</h2>
+        {% if payload.projects and payload.shards and payload.llm_configs %}
+          <form method="post" action="{{ url_for('admin_shard_to_chunk_generate') }}" class="train-form">
+            <input type="hidden" name="project_slug" value="{{ payload.selected_project }}">
+            <input type="hidden" name="shard_id" value="{{ payload.selected_shard }}">
+            <div class="train-grid">
+              <label>llm_config_id
+                <select name="llm_config_id" required>
+                  {% set llm_selection = namespace(done=false) %}
+                  {% for llm_config in payload.llm_configs %}
+                    {% set preferred_llm = (not llm_selection.done) and llm_config.profile_type in ["chunk", "trunk"] %}
+                    <option value="{{ llm_config.config_id }}" {% if preferred_llm %}selected{% set llm_selection.done = true %}{% endif %}>
+                      {{ llm_config.name }} - {{ llm_config.profile_type or "general" }} / {{ llm_config.provider }} / {{ llm_config.model }}
+                    </option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>split_profile
+                <select name="split_profile">
+                  {% for split_profile in payload.split_profiles %}
+                    <option value="{{ split_profile }}" {% if split_profile == payload.defaults.split_profile %}selected{% endif %}>{{ split_profile }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>chunk_type
+                <select name="chunk_type">
+                  {% for chunk_type in payload.chunk_types %}
+                    <option value="{{ chunk_type }}" {% if chunk_type == payload.defaults.chunk_type %}selected{% endif %}>{{ chunk_type }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <label>target_tokens
+                <input type="number" name="target_tokens" value="{{ payload.defaults.target_tokens }}" min="80" max="2000">
+              </label>
+              <label>source_window_chars
+                <input type="number" name="source_window_chars" value="{{ payload.defaults.source_window_chars }}" min="1000" max="200000">
+              </label>
+              <label>max_windows
+                <input type="number" name="max_windows" value="{{ payload.defaults.max_windows }}" min="1" max="25">
+              </label>
+              <label>max_chunks_per_window
+                <input type="number" name="max_chunks_per_window" value="{{ payload.defaults.max_chunks_per_window }}" min="1" max="40">
+              </label>
+              <label>output_max_tokens
+                <input type="number" name="output_max_tokens" value="{{ payload.defaults.output_max_tokens }}" min="64" max="8000">
+              </label>
+              <label class="checkbox-row">
+                <input type="checkbox" name="json_mode" checked>
+                JSON strict
+              </label>
+              <label class="checkbox-row">
+                <input type="checkbox" name="replace_existing" checked>
+                Remplacer les chunks du shard
+              </label>
+            </div>
+            <button type="submit" class="icon-btn icon-run" title="Generer chunks LLM" aria-label="Generer chunks LLM"></button>
+          </form>
+        {% elif not payload.projects %}
+          <p class="empty">Aucun projet disponible.</p>
+        {% elif not payload.shards %}
+          <p class="empty">Aucun shard disponible pour ce projet.</p>
+        {% else %}
+          <p class="empty">Aucune configuration LLM disponible.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Shards du projet</h2>
+        {% if payload.shards %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>UUID</th>
+                  <th>Titre</th>
+                  <th>Source</th>
+                  <th>Taille</th>
+                  <th>Chunks</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for shard in payload.shards %}
+                  <tr class="{% if payload.selected_shard == shard.uuid %}row-selected{% endif %}">
+                    <td><code>{{ shard.uuid }}</code></td>
+                    <td>{{ shard.title_document or '-' }}</td>
+                    <td>{{ shard.source_document or '-' }}</td>
+                    <td>{{ shard.content_length }}</td>
+                    <td>
+                      <strong>{{ shard.chunk_count }}</strong><br>
+                      <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.selected_project) }}?shard_id={{ shard.uuid }}">Ouvrir</a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun shard pour ce projet.</p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Chunking deterministe</h2>
+        <div class="details-grid">
+          <p><strong>chunkMaxTokens:</strong> taille cible d'un chunk.</p>
+          <p><strong>chunkOverlapTokens:</strong> recouvrement entre chunks consecutifs.</p>
+          <p><strong>headingMaxLevel:</strong> niveau de titre Markdown utilise pour decouper les sections.</p>
+          <p><strong>metadata:</strong> lineage, navigation, rattachement shard/document et type de chunk.</p>
+        </div>
+        {% if payload.selected_project %}
+          <a class="ghost-button" href="{{ url_for('project_shard_list', project_slug=payload.selected_project) }}">Ouvrir le chunking classique</a>
+        {% endif %}
+      </section>
+    {% endif %}
   </main>
 </body>
 </html>

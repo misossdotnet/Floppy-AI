@@ -1262,6 +1262,12 @@ def ensure_business_tables(cur):
         );
         """
     )
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS chunk_type text NOT NULL DEFAULT 'markdown';")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS chunking_method text NOT NULL DEFAULT 'deterministic';")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS llm_config_id text;")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS llm_profile_type text;")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS llm_audit_session_id text;")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;")
     cur.execute(
         f"""
         CREATE TABLE IF NOT EXISTS public.{DATASET_BUILD_TABLE} (
@@ -1780,19 +1786,27 @@ def get_project_crud_payload(project_slug: str):
 
             cur.execute(
                 sql.SQL(
-                    """
+                    f"""
                     SELECT
-                        uuid,
-                        shard_id,
-                        source_document,
-                        url_document,
-                        title_document,
-                        content_document,
-                        autor_document
-                    FROM {}
-                    ORDER BY uuid;
+                        c.uuid,
+                        c.shard_id,
+                        c.source_document,
+                        c.url_document,
+                        c.title_document,
+                        c.content_document,
+                        c.autor_document,
+                        m.chunk_type,
+                        m.chunking_method,
+                        m.llm_config_id,
+                        m.llm_profile_type
+                    FROM {{}} c
+                    LEFT JOIN public.{CHUNK_METADATA_TABLE} m
+                        ON m.chunk_id = c.uuid
+                       AND m.project_slug = %s
+                    ORDER BY c.uuid;
                     """
-                ).format(sql.Identifier("public", chunk_table))
+                ).format(sql.Identifier("public", chunk_table)),
+                (project_slug,),
             )
             chunk_rows = cur.fetchall()
 
@@ -1807,6 +1821,12 @@ def get_project_crud_payload(project_slug: str):
                         "title_document": row[4] or "",
                         "content_document": row[5] or "",
                         "autor_document": row[6] or "",
+                        "metadata": {
+                            "chunk_type": row[7] or "markdown",
+                            "chunking_method": row[8] or "deterministic",
+                            "llm_config_id": row[9] or "",
+                            "llm_profile_type": row[10] or "",
+                        },
                     }
                 )
 
@@ -3757,7 +3777,13 @@ def get_document_review_chunks(cur, project_slug: str, document_id: str, exclude
                 m.previous_document_id,
                 m.previous_chunk_id,
                 m.next_chunk_id,
-                m.quality_score
+                m.quality_score,
+                m.chunk_type,
+                m.chunking_method,
+                m.llm_config_id,
+                m.llm_profile_type,
+                m.llm_audit_session_id,
+                m.metadata
             FROM {{}} AS c
             LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
                 ON m.chunk_id = c.uuid
@@ -3792,6 +3818,12 @@ def get_document_review_chunks(cur, project_slug: str, document_id: str, exclude
                     "previous_document_id": row[9],
                     "previous_chunk_id": row[10],
                     "next_chunk_id": row[11],
+                    "chunk_type": row[13] or "markdown",
+                    "chunking_method": row[14] or "deterministic",
+                    "llm_config_id": row[15] or "",
+                    "llm_profile_type": row[16] or "",
+                    "llm_audit_session_id": row[17] or "",
+                    "extra": row[18] or {},
                 },
             }
         )
@@ -4094,7 +4126,11 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
                 m.previous_chunk_id,
                 m.next_chunk_id,
                 m.quality_score,
-                p.approval_status
+                p.approval_status,
+                m.chunk_type,
+                m.chunking_method,
+                m.llm_config_id,
+                m.llm_profile_type
             FROM {{}} c
             LEFT JOIN public.{CHUNK_METADATA_TABLE} m
                 ON m.chunk_id = c.uuid
@@ -4125,6 +4161,10 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
         next_chunk_id = row[11]
         quality_score = float(row[12]) if row[12] is not None else compute_quality_score(content_document)
         approval_status = row[13] or "pending"
+        chunk_type = row[14] or "markdown"
+        chunking_method = row[15] or "deterministic"
+        llm_config_id = row[16] or ""
+        llm_profile_type = row[17] or ""
         is_excluded = section_path in excluded_paths_by_document.get(shard_id, set())
 
         if row[12] is None:
@@ -4185,6 +4225,10 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
                     "previous_document_id": previous_document_id,
                     "previous_chunk_id": previous_chunk_id,
                     "next_chunk_id": next_chunk_id,
+                    "chunk_type": chunk_type,
+                    "chunking_method": chunking_method,
+                    "llm_config_id": llm_config_id,
+                    "llm_profile_type": llm_profile_type,
                 },
             }
         )
