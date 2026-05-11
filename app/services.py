@@ -4914,7 +4914,14 @@ def mcp_tool_result_payload(data, is_error: bool = False):
 
 def resolve_return_url(return_to: str, default_endpoint: str, project_slug: str):
     """Resolve return url."""
-    allowed_no_args = {"home", "admin_dashboard", "projects_shards", "projects_train"}
+    allowed_no_args = {
+        "home",
+        "admin_dashboard",
+        "projects_shards",
+        "projects_chunks",
+        "projects_document_vision",
+        "projects_train",
+    }
     allowed_with_slug = {
         "project_shard_list",
         "project_shard_new",

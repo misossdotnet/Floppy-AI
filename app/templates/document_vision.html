@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Vision | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Projet</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train</a>
+          <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ payload.project.slug }}">Revue documents</a>
+        {% endif %}
+        <a class="ghost-link" href="{{ url_for('admin_document_vision_config') }}">Configuration Document Vision</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Document Vision</h1>
+      {% if payload %}
+        <p class="lead">Analyse image/PDF par LLM vision-langage pour extraire un Markdown exploitable en shard puis en indexation RAG. Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
+      {% else %}
+        <p class="lead">Analyse image/PDF par LLM vision-langage pour extraire un Markdown exploitable en shard puis en indexation RAG.</p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Module</p>
+            <p class="kpi-value">{% if payload.status.enabled %}Actif{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if payload.status.configured %}Configure{% else %}Incomplet{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ payload.status.model or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Analyses</p>
+            <p class="kpi-value">{{ payload.runs | length }}</p>
+          </article>
+        </div>
+        {% if payload.status.db_error %}
+          <div class="alert error">{{ payload.status.db_error }}</div>
+        {% elif not payload.status.available %}
+          <div class="alert error">Document Vision est indisponible tant que le module ou sa configuration LLM est incomplete.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Nouveau document</h2>
+        <form method="post" action="{{ url_for('project_document_vision_analyze', project_slug=payload.project.slug) }}" class="train-form" enctype="multipart/form-data">
+          <div class="train-grid">
+            <label>Fichier image/PDF
+              <input type="file" name="document_file" accept=".pdf,image/jpeg,image/png,image/webp,image/gif" required>
+            </label>
+            <label>Titre shard optionnel
+              <input type="text" name="title_document" placeholder="Titre a appliquer au shard">
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" name="create_shard" value="1" {% if payload.config.auto_create_shard %}checked{% endif %}>
+              Creer un shard depuis l'extraction
+              <input type="hidden" name="create_shard" value="0">
+            </label>
+            <label class="full-span">Consignes supplementaires
+              <textarea name="extra_instructions" rows="4" placeholder="Ex: prioriser les tableaux, conserver les references, signaler les zones illisibles"></textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-run" title="Analyser le document" aria-label="Analyser le document" {% if not payload.status.available %}disabled{% endif %}></button>
+        </form>
+        <p class="muted-line">Formats acceptes: PDF, PNG, JPEG, WEBP, GIF. Limite actuelle: {{ payload.config.max_file_size_mb }} Mo.</p>
+      </section>
+
+      {% if result %}
+        <section class="card">
+          <div class="project-head">
+            <div>
+              <h2>{{ result.title or result.filename }}</h2>
+              {% if result.summary %}
+                <p class="lead">{{ result.summary }}</p>
+              {% endif %}
+            </div>
+            <span class="stat-chip">Run {{ result.run_id }}</span>
+          </div>
+          <div class="views-nav">
+            {% if result.shard_id %}
+              <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=payload.project.slug, shard_uuid=result.shard_id) }}">Shard cree</a>
+            {% endif %}
+            {% if result.audit_session_id %}
+              <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=result.audit_session_id) }}">Audit LLM</a>
+            {% endif %}
+          </div>
+          <div class="kpi-grid">
+            <article class="kpi-card">
+              <p class="kpi-label">Type</p>
+              <p class="kpi-value">{{ result.document_type or '-' }}</p>
+            </article>
+            <article class="kpi-card">
+              <p class="kpi-label">Langue</p>
+              <p class="kpi-value">{{ result.language or '-' }}</p>
+            </article>
+            <article class="kpi-card">
+              <p class="kpi-label">Media</p>
+              <p class="kpi-value">{{ result.media_type or '-' }}</p>
+            </article>
+          </div>
+
+          {% if result.rag_indexing_notes %}
+            <h3>Notes RAG</h3>
+            <ul class="plain-list">
+              {% for item in result.rag_indexing_notes %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          {% if result.quality_warnings %}
+            <h3>Avertissements qualite</h3>
+            <ul class="plain-list">
+              {% for item in result.quality_warnings %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          {% if result.tables %}
+            <h3>Tableaux detectes</h3>
+            <div class="sequence-plan">
+              {% for table in result.tables %}
+                <article class="pipeline-step">
+                  <h4>{{ table.title or "Tableau" }}</h4>
+                  <pre class="document-content">{{ table.markdown or table }}</pre>
+                </article>
+              {% endfor %}
+            </div>
+          {% endif %}
+
+          {% if result.entities %}
+            <h3>Entites</h3>
+            <ul class="plain-list">
+              {% for entity in result.entities %}
+                <li>{{ entity.label or entity.type or "Entite" }}: {{ entity.value or entity }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+
+          <h3>Markdown extrait</h3>
+          <pre class="document-content">{{ result.extracted_markdown }}</pre>
+        </section>
+      {% endif %}
+
+      <section class="card">
+        <h2>Dernieres analyses</h2>
+        {% if payload.runs %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Fichier</th>
+                  <th>Titre</th>
+                  <th>Apercu</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for run in payload.runs %}
+                  <tr>
+                    <td>{{ run.created_at }}</td>
+                    <td>{{ run.filename or '-' }}<br><span class="muted-line">{{ run.media_type or '-' }}</span></td>
+                    <td>{{ run.title or run.run_id }}</td>
+                    <td>{{ run.preview or '-' }}</td>
+                    <td>
+                      <div class="action-row">
+                        {% if run.shard_id %}
+                          <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=payload.project.slug, shard_uuid=run.shard_id) }}">Shard</a>
+                        {% endif %}
+                        {% if run.audit_session_id %}
+                          <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=run.audit_session_id) }}">Audit</a>
+                        {% endif %}
+                      </div>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune analyse Document Vision pour ce projet.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

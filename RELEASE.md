@@ -46,7 +46,7 @@ En pratique, `Floppy-AI` permet:
 
 ## Architecture technique
 
-- Backend: `Flask` (Python)
+- Backend: `Flask` (Python) servi par `Uvicorn` via wrapper ASGI
 - Base de donnees: `PostgreSQL`
 - Conteneurisation: `Docker / Docker Compose`
 - Code applicatif: dossier `app/`
@@ -59,6 +59,12 @@ En pratique, `Floppy-AI` permet:
 - `api_rest.py`: routes REST metier
 - `api_mcp.py`: endpoint MCP JSON-RPC
 - `ui.py`: routes UI HTML
+- `quizbot.py`: logique QuizBot public/admin, sujets, sessions, configuration LLM et audit
+- `task_sequencer.py`: module Workflow Sequencer connecte, configuration LLM dediee et historique des plans
+- `llm_comparator.py`: comparaison de modeles Ollama locaux, benchmarks bilingues, metriques et exports
+- `document_vision.py`: module Document Vision projet, upload image/PDF, extraction OCR/VLM et creation optionnelle de shard
+- `shard_quality.py`: module Shard Quality projet, analyse de coherence intellectuelle des shards et historique audite
+
 
 ## Modele de donnees
 
@@ -164,14 +170,60 @@ Recommandation generale pour un dataset documentaire LLM:
 - `headingMaxLevel`: 2 ou 3
 - `tokenEstimator`: `words` (suffisant dans la majorite des cas)
 
-## Routes utiles
+## Routes
 
-- `GET /` : creation de projet et vue rapide des composants
-- `GET /projects/shards` : vue detaillee projets + shards + compteurs
+- `GET /` : espace public, statut LLM et vitrine des modules publics
+- `GET /admin/login` : authentification administration
+- `GET /admin` : tableau de bord administration, projets et modules internes
+- `GET|POST /admin/llm` : consultation et configuration du moteur LLM
+- `GET /admin/llm/audit` : journal des sessions LLM
+- `GET /admin/llm/audit/<session_id>` : detail des echanges traces pour une session LLM
+- `GET|POST /admin/llm-comparator` : comparaison de modeles Ollama locaux via benchmarks, prompts custom, tool calling et vision image
+- `GET /admin/llm-comparator/runs/<run_id>` : detail d'un run Comparator avec vue simple et avancee
+- `GET /admin/llm-comparator/runs/<run_id>/export?format=csv|json|md` : export d'un run Comparator
+- `GET /webchat` : webchat public, disponible seulement si le module est active et le LLM connecte
+- `POST /webchat/messages` : envoi d'un message au webchat public
+- `GET /admin/webchat` : configuration du webchat public et de sa chaine de traitement
+- `POST /admin/webchat/config` : activation/blocage du webchat public
+- `POST /admin/webchat/pipeline` : ajout dynamique d'une etape de pipeline
+- `GET /admin/webchat/sessions` : sessions du webchat public
+- `GET /admin/shard-to-chunk` : module Shard-To-Chunk assiste LLM avec selection projet/shard, profil de decoupage et type de chunk
+- `POST /admin/shard-to-chunk/generate` : generation LLM de chunks pour un shard selectionne
+- `GET /quizbot` : quiz public, disponible seulement si QuizBot est actif, configure et contient des sujets actifs
+- `POST /quizbot/start` : creation d'une session et generation LLM d'une question
+- `POST /quizbot/answer` : correction LLM de la reponse utilisateur
+- `POST /quizbot/feedback` : avis utilisateur sur la session QuizBot
+- `GET /admin/quizbot` : tableau de bord QuizBot
+- `GET|POST /admin/quizbot/config` : configuration QuizBot via le registre LLM commun
+- `GET /admin/quizbot/topics` : gestion des sujets QuizBot
+- `GET /admin/quizbot/sessions` : suivi des sessions QuizBot
+- `GET /admin/quizbot/audit` : journal d'audit applicatif QuizBot
+- `GET /admin/chat-evaluations` : acces transversal aux evaluations chat par projet
+- `GET /admin/chunking-config` : alias du module Shard-To-Chunk
+- `GET|POST /admin/vectorization` : configuration du moteur d'embeddings et suivi pgvector
+- `POST /admin/vectorization/test` : test du endpoint embeddings configure
+- `GET|POST /admin/tools/html-to-md` : conversion HTML vers Markdown
+- `GET /admin/agentai-docs` : formulaire de generation LLM pour les fichiers `docs/agentai/**/*.md`
+- `POST /admin/agentai-docs/generate` : generation JSON des documents Markdown via LLM avec audit
+- `POST /admin/agentai-docs/save` : sauvegarde des documents generes dans `docs/agentai/`
+- `GET /admin/workflow-sequencer` : module connecte de sequencage de taches
+- `POST /admin/workflow-sequencer/suggest-axes` : suggestion LLM des axes de workflow depuis le contexte
+- `POST /admin/workflow-sequencer/generate` : generation LLM du decoupage en sequences
+- `GET|POST /admin/workflow-sequencer/config` : configuration dediee du module Workflow Sequencer
+- `GET|POST /admin/document-vision/config` : configuration dediee du module Document Vision
+- `GET|POST /admin/shard-quality/config` : configuration dediee du module Shard Quality
+- `GET /projects/shards` : vue detaillee projets + shards, saisie manuelle de shards et compteurs
+- `GET /projects/chunks` : vue detaillee projets + chunks et saisie manuelle de chunks
+- `GET /projects/document-vision` : entree projet pour le module Document Vision
+- `GET /projects/shard-quality` : entree projet pour l'analyse qualite des shards
 - `POST /projects/<project_slug>/chunkify` : generation des chunks
 - `POST /projects/<project_slug>/train` : ajout d'un item train
 - `POST /projects/<project_slug>/delete` : suppression projet + tables dynamiques
 - `GET /projects/<project_slug>/shard-list` : liste shards (add/delete/visualisation)
+- `GET /projects/<project_slug>/shards/<shard_uuid>/quality` : analyse qualite d'un shard
+- `POST /projects/<project_slug>/shards/<shard_uuid>/quality/analyze` : appel LLM Shard Quality et historisation
+- `GET /projects/<project_slug>/document-vision` : upload image/PDF et analyse Document Vision pour un projet
+- `POST /projects/<project_slug>/document-vision/analyze` : appel LLM vision et creation optionnelle d'un shard
 - `POST /projects/<project_slug>/shards/add` : ajout shard
 - `POST /projects/<project_slug>/shards/<shard_uuid>/delete` : suppression shard
 - `GET /projects/<project_slug>/train-list` : liste train (add/delete)
@@ -183,11 +235,15 @@ Recommandation generale pour un dataset documentaire LLM:
 - `GET /projects/<project_slug>/chat-list` : liste sessions chat + detail conversation
 - `GET /projects/<project_slug>/chat-dashboard` : KPI et analyses chat_evaluation
 - `POST /projects/<project_slug>/chat-evaluations` : creation/mise a jour evaluation par `session_id`
+- `POST /projects/<project_slug>/vectorize` : vectorisation batch des donnees shard/chunk/train
 - `GET /health` : healthcheck
+
+> Les routes UI metier existantes restent disponibles mais sont rattachees a l'espace administration par session navigateur.
+
 
 ## API metier (REST JSON)
 
-Nouvelle couche API orientee "preparation de corpus":
+Couche API orientee "preparation de corpus":
 
 - `POST /projects/<project_slug>/imports` (alias: `/api/v1/projects/<project_slug>/imports`)
 - `POST /documents/<document_id>/normalize` (alias: `/api/v1/documents/<document_id>/normalize`)
@@ -198,20 +254,32 @@ Nouvelle couche API orientee "preparation de corpus":
 - `GET /documents/<document_id>/lineage?project=<slug>` (alias: `/api/v1/documents/<document_id>/lineage`)
 - `POST /documents/<document_id>/approve` (alias: `/api/v1/documents/<document_id>/approve`)
 
-Objets metier ajoutes:
+Objets metier :
 
 - `public.document_processing` (normalisation, statut d'approbation, score qualite)
 - `public.chunk_metadata` (lineage des chunks et score qualite)
 - `public.dataset_build` (historique des builds dataset)
+- `public.vectorization_config` (configuration embeddings dediee a pgvector)
 
 ### Authentification API/MCP
 
-Les routes metier sensibles (`imports`, `normalize`, `chunk`, `build-dataset`, `approve`, `mcp`) et les routes UI destructives (`delete`) supportent une authentification par token.
+Les routes metier sensibles (`imports`, `normalize`, `chunk`, `build-dataset`, `approve`, `mcp`) et les endpoints API de lecture sensible (`GET /dataset-builds/<id>`, `GET /chunks`, `GET /documents/<id>/lineage`) exigent une authentification par token. Les routes UI destructives (`delete`) restent protegees egalement.
 
-- Header recommande: `Authorization: Bearer <token>`
-- Alternative: `X-Floppy-Token: <token>`
+- Headers acceptes: `Authorization: Bearer <token>`, `X-Floppy-Token: <token>`, `X-Api-Token: <token>`
+- Les tokens en query string ou en formulaire (`api_token`) ne sont plus acceptes.
 - Scopes attendus selon la route: `imports`, `normalize`, `chunk`, `build_dataset`, `approve`, `mcp`, `write`, `delete` (ou `admin`)
-- ACL MCP par outil (en plus du scope `mcp`): `floppy.import_documents` -> `imports`, `floppy.normalize_document` -> `normalize`, `floppy.chunk_project` -> `chunk`, `floppy.build_dataset` -> `build_dataset`, `floppy.approve_document` -> `approve`
+- Endpoints API de lecture sensible:
+  - `GET /dataset-builds/<id>` -> `build_dataset`
+  - `GET /chunks` -> un des scopes `chunk`, `build_dataset`, `approve`
+  - `GET /documents/<id>/lineage` -> un des scopes `chunk`, `approve`
+- ACL MCP par outil (en plus du scope `mcp`):
+  - `floppy.import_documents` -> `imports`
+  - `floppy.normalize_document` -> `normalize`
+  - `floppy.chunk_project` -> `chunk`
+  - `floppy.build_dataset` et `floppy.get_dataset_build` -> `build_dataset`
+  - `floppy.search_chunks` -> un des scopes `chunk`, `build_dataset`, `approve`
+  - `floppy.get_document_lineage` -> un des scopes `chunk`, `approve`
+  - `floppy.approve_document` -> `approve`
 
 Validation centralisee des payloads:
 
@@ -221,8 +289,42 @@ Validation centralisee des payloads:
 Variables d'environnement:
 
 - `APP_ENV` (`development`/`local`/`test` => mode local)
+- `POSTGRES_HOST` (host PostgreSQL, defaut `db` avec Docker Compose)
+- `POSTGRES_PORT` (port PostgreSQL, defaut `5432`)
+- `POSTGRES_DB` (base applicative, defaut `dataswarehouse`)
+- `POSTGRES_USER` (utilisateur PostgreSQL, defaut `postgres`)
+- `POSTGRES_PASSWORD` (obligatoire hors environnement local)
+- `POSTGRES_MAINTENANCE_DB` (base existante utilisee pour creer `POSTGRES_DB` quand `POSTGRES_AUTO_CREATE_DB=true`, defaut `postgres`, fallback `template1`)
+- `POSTGRES_AUTO_CREATE_DB` (`true`/`false`; defaut applicatif `true` en local, `false` via les Compose)
+- `APP_ENABLE_UI` (`true`/`false`, defaut `true`)
+- `APP_ENABLE_API` (`true`/`false`, defaut `true`)
+- `APP_ENABLE_MCP` (`true`/`false`, defaut `true`)
 - `FLOPPY_REQUIRE_AUTH` (defaut: `false` en local, `true` hors local)
 - `FLOPPY_AUTH_TOKENS` (format JSON ou CSV `token:scope1|scope2`)
+- `FLOPPY_ADMIN_USERNAME` (identifiant admin UI, defaut `admin` en local)
+- `FLOPPY_ADMIN_PASSWORD` (mot de passe admin UI, defaut `admin` en local)
+- `ASGI_WSGI_THREADPOOL_WORKERS` (nombre de requetes Flask synchrones executables en parallele sous Uvicorn, defaut `8`)
+- `LLM_PROVIDER` (`ollama`, `litellm`, `openai`, `lmstudio`, `openai_compatible`, `custom`; defaut `ollama`)
+- `LLM_API_URL` ou `AGENTAI_LLM_API_URL` (endpoint chat compatible OpenAI, ou `/api/chat` Ollama natif)
+- `LLM_API_KEY` ou `AGENTAI_LLM_API_KEY` (optionnel selon le fournisseur LLM)
+- `LLM_MODEL` ou `AGENTAI_LLM_MODEL` (modele utilise par les modules LLM)
+- `LLM_TIMEOUT` ou `AGENTAI_LLM_TIMEOUT` (timeout HTTP LLM en secondes, defaut `90`, borne haute `360`)
+- `LLM_MAX_TOKENS` ou `AGENTAI_LLM_MAX_TOKENS` (defaut `800`)
+- `LLM_RETRIES` ou `AGENTAI_LLM_RETRIES` (defaut `1`)
+- `LLM_JSON_MODE` ou `AGENTAI_LLM_JSON_MODE` (`true`/`false`, defaut `false`)
+- `UVICORN_TIMEOUT_KEEP_ALIVE` (temporisation keep-alive Uvicorn en secondes, defaut `360`)
+- `UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN` (delai d'arret gracieux Uvicorn en secondes, defaut `360`)
+- `VECTOR_ENABLED` (`true`/`false`, defaut `false`)
+- `VECTOR_LLM_CONFIG_ID` (configuration LLM dediee aux embeddings)
+- `VECTOR_EMBEDDING_API_URL` (endpoint embeddings optionnel, sinon derive du endpoint LLM)
+- `VECTOR_EMBEDDING_MODEL` (modele embeddings optionnel, sinon modele de la configuration LLM)
+- `VECTOR_EMBEDDING_DIMENSIONS` (dimensions attendues, defaut `1536`)
+- `VECTOR_BATCH_SIZE` (taille batch UI, defaut `25`)
+- `QUIZBOT_LLM_PROVIDER` (`ollama` ou `litellm`, defaut `ollama`)
+- `QUIZBOT_LLM_API_URL` (endpoint chat completions QuizBot)
+- `QUIZBOT_LLM_API_KEY` (optionnel selon le fournisseur)
+- `QUIZBOT_QUESTION_MODEL` (modele de generation des questions)
+- `QUIZBOT_CORRECTION_MODEL` (modele de correction des reponses)
 
 ### Exemple import de documents
 

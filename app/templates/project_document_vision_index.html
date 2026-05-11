@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document Vision | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Document Vision</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
+        <a class="ghost-link" href="{{ url_for('projects_chunks') }}">Chunk</a>
+        <a class="ghost-link" href="{{ url_for('admin_document_vision_config') }}">Configuration Document Vision</a>
+      </div>
+      <h1>Document Vision</h1>
+      <p class="lead">Selectionnez un projet pour analyser des images/PDF par LLM vision-langage et creer des shards exploitables en RAG.</p>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">Connexion PostgreSQL impossible: {{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if projects %}
+      <section class="card">
+        <h2>Projets</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Projet</th>
+                <th>Slug</th>
+                <th>Shards</th>
+                <th>Chunks</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for project in projects %}
+                <tr>
+                  <td>{{ project.name }}</td>
+                  <td><code>{{ project.slug }}</code></td>
+                  <td><strong>{{ project.shard_count }}</strong></td>
+                  <td><strong>{{ project.total_chunks }}</strong></td>
+                  <td>
+                    <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=project.slug) }}">Ouvrir Document Vision</a>
+                    <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% else %}
+      <section class="card">
+        <p class="empty">Aucun projet disponible.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

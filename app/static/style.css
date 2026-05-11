@@ -238,6 +238,13 @@ body::before {
   color: var(--accent);
 }
 
+.nav-block a.nav-subitem {
+  grid-template-columns: 18px 1fr;
+  margin-left: 16px;
+  min-height: 34px;
+  font-size: 0.92rem;
+}
+
 .nav-block i {
   color: var(--accent);
   text-align: center;
@@ -1367,6 +1374,53 @@ button.icon-dialogue::before {
   margin: 8px 0 0;
   padding-left: 18px;
   color: var(--muted);
+}
+
+.suggestion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.axis-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--field-bg);
+  padding: 12px;
+}
+
+.axis-card h3 {
+  margin: 0 0 8px;
+}
+
+.axis-card p {
+  color: var(--muted);
+}
+
+.sequence-plan {
+  display: grid;
+  gap: 12px;
+}
+
+.sequence-task-list {
+  display: grid;
+  gap: 10px;
+  padding-left: 22px;
+}
+
+.sequence-task-list li {
+  padding-left: 4px;
+}
+
+.sequence-task-list p {
+  margin: 6px 0 0;
+}
+
+button:disabled,
+.ghost-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .compact-pre {

@@ -4,7 +4,7 @@ import hashlib
 import sys
 from pathlib import Path
 
-from db import get_db_connection
+from db import describe_db_target, get_db_connection
 
 MIGRATIONS_TABLE = "schema_migrations"
 MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
@@ -19,6 +19,8 @@ APPLICATION_BOOTSTRAP_TABLES = (
     "llm_config",
     "llm_audit_session",
     "llm_audit_exchange",
+    "llm_comparator_run",
+    "llm_comparator_result",
     "quizbot_config",
     "quizbot_topic",
     "quizbot_session",
@@ -28,6 +30,12 @@ APPLICATION_BOOTSTRAP_TABLES = (
     "webchat_session",
     "webchat_message",
     "vectorization_config",
+    "task_sequencer_config",
+    "task_sequencer_run",
+    "document_vision_config",
+    "document_vision_run",
+    "shard_quality_config",
+    "shard_quality_run",
 )
 
 
@@ -81,12 +89,16 @@ def list_missing_application_tables(cur):
 def ensure_application_schema(cur):
     """Create and synchronize global application tables."""
     from llm_gateway import ensure_llm_tables
+    from llm_comparator import ensure_llm_comparator_tables
     from quizbot import ensure_quizbot_tables
+    from document_vision import ensure_document_vision_tables
+    from shard_quality import ensure_shard_quality_tables
     from services import (
         ensure_business_tables,
         ensure_pgvector_extension,
         ensure_projects_table,
     )
+    from task_sequencer import ensure_task_sequencer_tables
     from vectorization import ensure_vectorization_tables
     from webchat import ensure_webchat_tables
 
@@ -94,9 +106,13 @@ def ensure_application_schema(cur):
     ensure_projects_table(cur)
     ensure_business_tables(cur)
     ensure_llm_tables(cur)
+    ensure_llm_comparator_tables(cur)
     ensure_quizbot_tables(cur)
     ensure_webchat_tables(cur)
     ensure_vectorization_tables(cur)
+    ensure_task_sequencer_tables(cur)
+    ensure_document_vision_tables(cur)
+    ensure_shard_quality_tables(cur)
 
 
 def get_pgvector_version(cur):
@@ -147,6 +163,7 @@ def apply_pending_migrations(cur):
 
 def main():
     """Run the migration command-line entry point."""
+    print(f"[migrate] cible PostgreSQL: {describe_db_target()}")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             applied_now = apply_pending_migrations(cur)

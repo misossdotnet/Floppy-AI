@@ -16,6 +16,7 @@ Le besoin principal est de:
 - preparer des corpus structurables pour des workflows RAG;
 - maintenir des traces reutilisables comme memoire persistante;
 - construire et tester des assistants agents specialises autour de ces donnees.
+- comparaison de modeles Ollama locaux, benchmarks bilingues, metriques et exports
 
 L'objectif est d'avoir un socle simple, traceable et reproductible pour passer d'un document brut (Markdown/HTML exporte) a des segments enrichis de metadata de navigation et a des jeux de donnees evaluables.
 

@@ -10,15 +10,14 @@
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Chunk</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
         {% if payload %}
-          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
-          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
-          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk</a>
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train</a>
         {% endif %}
       </div>
       <h1>Nouveau chunk</h1>

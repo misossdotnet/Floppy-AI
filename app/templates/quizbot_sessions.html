@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sessions QuizBot | Floppy-AI</title>
+  <title>QuizBot Chat Evaluation | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -16,8 +16,10 @@
         <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
         <a class="ghost-link" href="{{ url_for('admin_quizbot_topics') }}">Sujets</a>
         <a class="ghost-link" href="{{ url_for('admin_quizbot_audit') }}">Audit QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('admin_chat_evaluations') }}">Outside Chat Evaluation</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat_sessions') }}">WebChat Chat Evaluation</a>
       </div>
-      <h1>Sessions QuizBot</h1>
+      <h1>QuizBot Chat Evaluation</h1>
     </section>
 
     {% if db_error %}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chunk | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Chunk</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
+        <a class="ghost-link" href="{{ url_for('projects_train') }}">Train</a>
+      </div>
+      <h1>Chunk</h1>
+      <p class="lead">Creation manuelle de chunks et acces aux listes de chunks par projet.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">Connexion PostgreSQL impossible: {{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if projects %}
+      {% for project in projects %}
+        <section class="card project-card">
+          <div class="project-head">
+            <h2>{{ project.name }}</h2>
+            <div class="project-stats">
+              <span class="stat-chip"><strong>{{ project.total_chunks }}</strong> chunk(s)</span>
+              <span class="stat-chip"><strong>{{ project.shard_count }}</strong> shard(s)</span>
+            </div>
+          </div>
+
+          <p class="muted-line">
+            Slug: <code>{{ project.slug }}</code> |
+            Tables: <code>{{ project.chunk_table }}</code> / <code>{{ project.shard_table }}</code>
+          </p>
+          <p class="muted-line">
+            <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Ouvrir Chunk</a>
+            <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=project.slug) }}">Nouveau chunk</a>
+            <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard</a>
+            <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ project.slug }}">Shard-To-Chunk</a>
+          </p>
+
+          {% if project.shards %}
+            <form method="post" action="{{ url_for('add_chunk_item', project_slug=project.slug) }}" class="train-form">
+              <input type="hidden" name="return_to" value="projects_chunks">
+              <h3>Ajouter un chunk manuel</h3>
+              <div class="train-grid">
+                <label>shard_id
+                  <select name="shard_id" required>
+                    {% for shard in project.shards %}
+                      <option value="{{ shard.uuid }}">{{ shard.uuid }} - {{ shard.title_document or '-' }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>source_document<input type="text" name="source_document" placeholder="manual"></label>
+                <label>url_document<input type="text" name="url_document"></label>
+                <label>title_document<input type="text" name="title_document"></label>
+                <label>autor_document<input type="text" name="autor_document"></label>
+                <label class="full-span">content_document
+                  <textarea name="content_document" rows="5" required></textarea>
+                </label>
+              </div>
+              <button type="submit" class="icon-btn icon-add" title="Ajouter chunk" aria-label="Ajouter chunk"></button>
+            </form>
+          {% else %}
+            <p class="empty">Aucun shard disponible. Creez d'abord un shard avant d'ajouter un chunk manuel.</p>
+            <a class="ghost-link" href="{{ url_for('project_shard_new', project_slug=project.slug) }}">Nouveau shard</a>
+          {% endif %}
+
+          {% if project.shards %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Shard UUID</th>
+                    <th>Titre shard</th>
+                    <th>Chunks</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for shard in project.shards %}
+                    <tr>
+                      <td><code>{{ shard.uuid }}</code></td>
+                      <td>{{ shard.title_document or '-' }}</td>
+                      <td><strong>{{ shard.chunk_count }}</strong></td>
+                      <td>
+                        <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}?shard_id={{ shard.uuid }}">Voir chunks</a>
+                        <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=project.slug) }}?shard_id={{ shard.uuid }}">Nouveau chunk</a>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
+        </section>
+      {% endfor %}
+    {% else %}
+      <section class="card">
+        <p class="empty">Aucun projet disponible.</p>
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

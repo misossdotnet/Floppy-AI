@@ -10,15 +10,15 @@
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero compact-hero">
-      <p class="eyebrow">Configuration</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Shard-To-Chunk</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shards</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
         <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
         <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
       </div>
       <h1>Shard-To-Chunk</h1>
-      <p class="lead">Generation de chunks deterministe ou assistee par une configuration LLM typee.</p>
+      <p class="lead">Transformation d'un shard en chunks par decoupage deterministe ou assistance LLM.</p>
     </section>
 
     {% with messages = get_flashed_messages(with_categories=true) %}

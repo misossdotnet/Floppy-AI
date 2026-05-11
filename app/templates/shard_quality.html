@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shard Quality | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Shard Quality</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('projects_shard_quality') }}">Shard Quality</a>
+        {% if payload %}
+          <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=payload.project.slug, shard_uuid=payload.shard.uuid) }}">Shard</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ payload.shard.uuid }}">Chunk</a>
+          <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=payload.project.slug, document_id=payload.shard.uuid) }}">Revue document</a>
+        {% endif %}
+        <a class="ghost-link" href="{{ url_for('admin_shard_quality_config') }}">Configuration Shard Quality</a>
+      </div>
+      <h1>Shard Quality</h1>
+      {% if payload %}
+        <p class="lead">Projet: <code>{{ payload.project.name }}</code> / Shard: <code>{{ payload.shard.uuid }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Module</p>
+            <p class="kpi-value">{% if payload.status.enabled %}Actif{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if payload.status.configured %}Configure{% else %}Incomplet{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ payload.status.model or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Historique</p>
+            <p class="kpi-value">{{ payload.runs | length }}</p>
+          </article>
+        </div>
+        {% if payload.status.db_error %}
+          <div class="alert error">{{ payload.status.db_error }}</div>
+        {% elif not payload.status.available %}
+          <div class="alert error">Shard Quality est indisponible tant que le module ou sa configuration LLM est incomplete.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <div class="project-head">
+          <div>
+            <h2>{{ payload.shard.title_document or payload.shard.uuid }}</h2>
+            <p class="muted-line">Source: {{ payload.shard.source_document or '-' }} | Chunks: <strong>{{ payload.shard.chunk_count }}</strong></p>
+          </div>
+          <span class="stat-chip">{{ payload.metrics.word_count }} mot(s)</span>
+        </div>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Couverture titre</p>
+            <p class="kpi-value">{{ (payload.metrics.title_coverage * 100) | round | int }}%</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Intertitres</p>
+            <p class="kpi-value">{{ payload.metrics.heading_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Listes</p>
+            <p class="kpi-value">{{ payload.metrics.list_item_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Citations</p>
+            <p class="kpi-value">{{ payload.metrics.quote_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Gras</p>
+            <p class="kpi-value">{{ payload.metrics.bold_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Tableaux</p>
+            <p class="kpi-value">{{ payload.metrics.table_count }}</p>
+          </article>
+        </div>
+        {% if payload.metrics.top_concepts %}
+          <p class="muted-line">Concepts locaux:
+            {% for concept in payload.metrics.top_concepts %}
+              <code>{{ concept.term }}:{{ concept.count }}</code>
+            {% endfor %}
+          </p>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Analyser</h2>
+        <form method="post" action="{{ url_for('project_shard_quality_analyze', project_slug=payload.project.slug, shard_uuid=payload.shard.uuid) }}" class="train-form">
+          <label>Consignes supplementaires
+            <textarea name="extra_instructions" rows="4" placeholder="Ex: verifier surtout la relation titre/conclusion, ou prioriser l'usage RAG"></textarea>
+          </label>
+          <button type="submit" class="icon-btn icon-run" title="Analyser qualite" aria-label="Analyser qualite" {% if not payload.status.available %}disabled{% endif %}></button>
+        </form>
+      </section>
+
+      {% if result %}
+        <section class="card">
+          <div class="project-head">
+            <div>
+              <h2>Resultat</h2>
+              {% if result.summary %}
+                <p class="lead">{{ result.summary }}</p>
+              {% endif %}
+            </div>
+            <span class="stat-chip">Score {{ result.overall_score }}/100</span>
+          </div>
+          <p><strong>Verdict:</strong> {{ result.verdict or '-' }}</p>
+          <div class="views-nav">
+            {% if result.audit_session_id %}
+              <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=result.audit_session_id) }}">Audit LLM</a>
+            {% endif %}
+          </div>
+          <div class="sequence-plan">
+            {% set axes = [
+              ('Promesse / realisation', result.promise_realization),
+              ('Signalement information', result.important_information_signaling),
+              ('Architecture idees', result.ideas_architecture),
+              ('Concepts fondamentaux', result.fundamental_concepts)
+            ] %}
+            {% for label, axis in axes %}
+              <article class="pipeline-step">
+                <div class="project-head">
+                  <h3>{{ label }}</h3>
+                  <span class="stat-chip">{{ axis.score }}/100</span>
+                </div>
+                {% if axis.findings %}
+                  <p class="muted-line">Constats</p>
+                  <ul class="plain-list">
+                    {% for item in axis.findings %}<li>{{ item }}</li>{% endfor %}
+                  </ul>
+                {% endif %}
+                {% if axis.issues %}
+                  <p class="muted-line">Problemes</p>
+                  <ul class="plain-list">
+                    {% for item in axis.issues %}<li>{{ item }}</li>{% endfor %}
+                  </ul>
+                {% endif %}
+                {% if axis.recommendations %}
+                  <p class="muted-line">Recommandations</p>
+                  <ul class="plain-list">
+                    {% for item in axis.recommendations %}<li>{{ item }}</li>{% endfor %}
+                  </ul>
+                {% endif %}
+              </article>
+            {% endfor %}
+          </div>
+          {% if result.priority_actions %}
+            <h3>Actions prioritaires</h3>
+            <ul class="plain-list">
+              {% for item in result.priority_actions %}<li>{{ item }}</li>{% endfor %}
+            </ul>
+          {% endif %}
+          {% if result.chunking_advice %}
+            <p><strong>Conseil chunking:</strong> {{ result.chunking_advice }}</p>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      <section class="card">
+        <h2>Dernieres analyses</h2>
+        {% if payload.runs %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Score</th>
+                  <th>Verdict</th>
+                  <th>Apercu</th>
+                  <th>Audit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for run in payload.runs %}
+                  <tr>
+                    <td>{{ run.created_at }}</td>
+                    <td><strong>{{ run.overall_score }}/100</strong></td>
+                    <td>{{ run.verdict or '-' }}</td>
+                    <td>{{ run.preview or '-' }}</td>
+                    <td>
+                      {% if run.audit_session_id %}
+                        <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=run.audit_session_id) }}">Ouvrir</a>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune analyse Shard Quality pour ce shard.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

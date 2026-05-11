@@ -9,13 +9,13 @@
 <body>
   {% include "_nav.html" %}
   {% set provider_options = ["ollama", "litellm", "openai", "lmstudio", "openai_compatible", "custom"] %}
-  {% set llm_profile_options = profile_options or ["general", "chunk", "trunk", "ocr", "chat", "embedding", "webchat", "quiz", "agent", "custom"] %}
+  {% set llm_profile_options = profile_options or ["general", "chunk", "trunk", "ocr", "vision", "quality", "chat", "embedding", "webchat", "quiz", "sequencing", "agent", "custom"] %}
   <main class="page">
     <section class="hero">
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">Administration</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
         <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Webchat public</a>
         <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
         <a class="ghost-link" href="{{ url_for('agentai_docs') }}">AgentAI Docs</a>

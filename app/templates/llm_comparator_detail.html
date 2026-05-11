@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Run Comparator | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Tools</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_llm_comparator') }}">Comparator</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Run Comparator</h1>
+      {% if payload %}
+        <p class="lead"><code>{{ payload.run.run_id }}</code></p>
+      {% endif %}
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <div class="project-head">
+          <div>
+            <h2>Vue simple</h2>
+            <p class="lead">{{ payload.run.summary.plain_language or "Aucune synthese disponible." }}</p>
+          </div>
+          <span class="stat-chip">{{ payload.run.status }}</span>
+        </div>
+        <div class="views-nav">
+          <a class="ghost-link" href="{{ url_for('admin_llm_comparator_export', run_id=payload.run.run_id, format='csv') }}">CSV</a>
+          <a class="ghost-link" href="{{ url_for('admin_llm_comparator_export', run_id=payload.run.run_id, format='json') }}">JSON</a>
+          <a class="ghost-link" href="{{ url_for('admin_llm_comparator_export', run_id=payload.run.run_id, format='md') }}">Markdown</a>
+        </div>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Succes</p>
+            <p class="kpi-value">{{ payload.run.summary.success_count or 0 }}/{{ payload.run.summary.total_results or payload.run.result_count }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Erreurs</p>
+            <p class="kpi-value">{{ payload.run.summary.error_count or 0 }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Plus rapide</p>
+            <p class="kpi-value">{% if payload.run.summary.fastest %}{{ payload.run.summary.fastest.model }}{% else %}-{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Tokens/s</p>
+            <p class="kpi-value">{% if payload.run.summary.speediest %}{{ payload.run.summary.speediest.model }}{% else %}-{% endif %}</p>
+          </article>
+        </div>
+        <div class="alert success">Guide: la latence mesure le temps de reponse, tokens/s estime le debit, le taux de succes mesure la fiabilite technique, et repeat_ratio signale les repetitions. Ces metriques ne notent pas la qualite.</div>
+      </section>
+
+      <section class="card">
+        <h2>Vue avancee</h2>
+        <div class="details-grid">
+          <p><strong>Mode:</strong> {{ payload.run.mode }}</p>
+          <p><strong>Acteur:</strong> {{ payload.run.actor or '-' }}</p>
+          <p><strong>Date:</strong> {{ payload.run.created_at }}</p>
+          <p><strong>Resultats:</strong> {{ payload.run.result_count }}</p>
+        </div>
+        <h3>Scores par modele</h3>
+        {% if payload.run.summary.model_scores %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Modele</th>
+                  <th>Succes</th>
+                  <th>Latence moy.</th>
+                  <th>Tokens/s moy.</th>
+                  <th>Repeat ratio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in payload.run.summary.model_scores %}
+                  <tr>
+                    <td>{{ item.model }}</td>
+                    <td>{{ item.success_count }}/{{ item.total_count }}</td>
+                    <td>{{ item.avg_latency_ms or '-' }}</td>
+                    <td>{{ item.avg_tokens_per_second or '-' }}</td>
+                    <td>{{ item.avg_repeat_ratio if item.avg_repeat_ratio is not none else '-' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun score par modele.</p>
+        {% endif %}
+
+        <h3>Parametres</h3>
+        <pre class="document-content compact-json">{{ payload.run.settings_json }}</pre>
+      </section>
+
+      <section class="card">
+        <h2>Resultats detailles</h2>
+        {% if payload.results %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Modele</th>
+                  <th>Benchmark</th>
+                  <th>Status</th>
+                  <th>Latence</th>
+                  <th>Tokens/s</th>
+                  <th>Tokens</th>
+                  <th>Audit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for result in payload.results %}
+                  <tr>
+                    <td>{{ result.model }}<br><span class="muted-line">{{ result.config_id }}</span></td>
+                    <td>{{ result.benchmark_id }}<br><span class="muted-line">{{ result.language or '-' }}</span></td>
+                    <td>{{ result.status }}</td>
+                    <td>{{ result.metrics.latency_ms or '-' }} ms</td>
+                    <td>{{ result.metrics.tokens_per_second or '-' }}</td>
+                    <td>{{ result.metrics.total_tokens or '-' }}</td>
+                    <td>
+                      {% if result.audit_session_id %}
+                        <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=result.audit_session_id) }}">Audit</a>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun resultat detaille.</p>
+        {% endif %}
+      </section>
+
+      {% for result in payload.results %}
+        <section class="card">
+          <div class="project-head">
+            <div>
+              <h2>{{ result.model }}</h2>
+              <p class="muted-line">{{ result.benchmark_id }} / {{ result.status }}</p>
+            </div>
+            <span class="stat-chip">{{ result.metrics.latency_ms or '-' }} ms</span>
+          </div>
+          {% if result.error_message %}
+            <div class="alert error">{{ result.error_message }}</div>
+          {% endif %}
+          <h3>System instruction</h3>
+          <pre class="document-content">{{ result.system_prompt }}</pre>
+          <h3>User prompt</h3>
+          <pre class="document-content">{{ result.user_prompt }}</pre>
+          <h3>Output</h3>
+          <pre class="document-content">{{ result.output_text or '-' }}</pre>
+          <h3>Metrics</h3>
+          <pre class="document-content compact-json">{{ result.metrics_json }}</pre>
+          <h3>Raw response</h3>
+          <pre class="document-content compact-json">{{ result.raw_response_json }}</pre>
+        </section>
+      {% endfor %}
+    {% endif %}
+  </main>
+</body>
+</html>

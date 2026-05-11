@@ -5,6 +5,22 @@ from agentai_docs import (
     get_agentai_docs_payload,
     save_agentai_documents,
 )
+from flask import Response
+from document_vision import (
+    analyze_project_document,
+    document_vision_status,
+    get_document_vision_config,
+    get_document_vision_project_payload,
+    save_document_vision_config,
+)
+from shard_quality import (
+    analyze_shard_quality,
+    get_shard_quality_config,
+    get_shard_quality_index_payload,
+    get_shard_quality_payload,
+    save_shard_quality_config,
+    shard_quality_status,
+)
 from llm_gateway import (
     LLM_PROFILE_TYPES,
     delete_llm_config,
@@ -17,6 +33,12 @@ from llm_gateway import (
     save_llm_config,
     set_default_llm_config,
     test_llm_config,
+)
+from llm_comparator import (
+    export_run as export_llm_comparator_run,
+    get_llm_comparator_payload,
+    get_run_detail as get_llm_comparator_run_detail,
+    run_llm_comparison,
 )
 from services import *
 from webchat import (
@@ -52,6 +74,14 @@ from shard_to_chunk_llm import (
     generate_chunks_with_llm,
     get_shard_to_chunk_payload,
 )
+from task_sequencer import (
+    generate_task_sequence,
+    get_task_sequencer_config,
+    get_task_sequencer_payload,
+    save_task_sequencer_config,
+    suggest_task_sequence_axes,
+    task_sequencer_status,
+)
 from tools import html_to_markdown
 from vectorization import (
     get_vectorization_admin_payload,
@@ -70,6 +100,9 @@ ADMIN_UI_ENDPOINTS = {
     "admin_llm_config_test",
     "admin_llm_audit",
     "admin_llm_audit_detail",
+    "admin_llm_comparator",
+    "admin_llm_comparator_detail",
+    "admin_llm_comparator_export",
     "admin_webchat",
     "admin_webchat_config",
     "admin_webchat_pipeline_add",
@@ -89,11 +122,29 @@ ADMIN_UI_ENDPOINTS = {
     "admin_quizbot_audit",
     "admin_chat_evaluations",
     "admin_faq",
+    "admin_workflow_sequencer",
+    "admin_workflow_sequencer_config",
+    "admin_workflow_sequencer_config_save",
+    "admin_workflow_sequencer_suggest_axes",
+    "admin_workflow_sequencer_generate",
+    "admin_task_sequencer_legacy",
+    "admin_task_sequencer_config_legacy",
+    "admin_task_sequencer_config_save_legacy",
+    "admin_task_sequencer_suggest_axes_legacy",
+    "admin_task_sequencer_generate_legacy",
     "admin_chunking_config",
     "admin_shard_to_chunk_generate",
     "admin_vectorization",
     "admin_vectorization_test",
     "admin_document_review",
+    "admin_document_vision_config",
+    "admin_document_vision_config_save",
+    "admin_shard_quality_config",
+    "admin_shard_quality_config_save",
+    "project_document_vision",
+    "project_document_vision_analyze",
+    "project_shard_quality",
+    "project_shard_quality_analyze",
     "html_to_md_tool",
     "add_project",
     "remove_project",
@@ -124,6 +175,9 @@ ADMIN_UI_ENDPOINTS = {
     "project_chat_dashboard",
     "submit_chat_evaluation",
     "projects_shards",
+    "projects_chunks",
+    "projects_document_vision",
+    "projects_shard_quality",
     "projects_train",
     "chunkify_project",
     "add_train_item",
@@ -272,6 +326,245 @@ def register_ui_routes(app):
         return render_template("faq.html")
 
 
+    @app.get("/admin/task-sequencer")
+    def admin_task_sequencer_legacy():
+        """Redirect legacy task sequencer URL to Workflow Sequencer."""
+        return redirect(url_for("admin_workflow_sequencer"))
+
+
+    @app.get("/admin/task-sequencer/config")
+    def admin_task_sequencer_config_legacy():
+        """Redirect legacy task sequencer config URL to Workflow Sequencer config."""
+        return redirect(url_for("admin_workflow_sequencer_config"))
+
+
+    @app.post("/admin/task-sequencer/config")
+    def admin_task_sequencer_config_save_legacy():
+        """Redirect legacy config POST to Workflow Sequencer config POST."""
+        return redirect(url_for("admin_workflow_sequencer_config_save"), code=308)
+
+
+    @app.post("/admin/task-sequencer/suggest-axes")
+    def admin_task_sequencer_suggest_axes_legacy():
+        """Redirect legacy axes endpoint to Workflow Sequencer axes endpoint."""
+        return redirect(url_for("admin_workflow_sequencer_suggest_axes"), code=308)
+
+
+    @app.post("/admin/task-sequencer/generate")
+    def admin_task_sequencer_generate_legacy():
+        """Redirect legacy generation endpoint to Workflow Sequencer generation endpoint."""
+        return redirect(url_for("admin_workflow_sequencer_generate"), code=308)
+
+
+    @app.get("/admin/workflow-sequencer")
+    def admin_workflow_sequencer():
+        """Render the connected Workflow Sequencer module."""
+        try:
+            payload = get_task_sequencer_payload()
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_workflow_sequencer", exc)
+        return render_template(
+            "task_sequencer.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+            form_values={},
+        )
+
+
+    @app.route("/admin/workflow-sequencer/config", methods=["GET"])
+    def admin_workflow_sequencer_config():
+        """Render Workflow Sequencer configuration."""
+        try:
+            config = get_task_sequencer_config()
+            status = task_sequencer_status(config)
+            db_error = None
+        except Exception as exc:
+            config = None
+            status = None
+            db_error = ui_internal_error_message("admin_workflow_sequencer_config", exc)
+        try:
+            llm_configs = list_llm_configs(redact_key=True)
+            llm_config_error = None
+        except Exception as exc:
+            llm_configs = []
+            llm_config_error = ui_internal_error_message("admin_workflow_sequencer_llm_configs", exc)
+        return render_template(
+            "task_sequencer_config.html",
+            config=config,
+            status=status,
+            db_error=db_error,
+            llm_configs=llm_configs,
+            llm_config_error=llm_config_error,
+        )
+
+
+    @app.post("/admin/workflow-sequencer/config")
+    def admin_workflow_sequencer_config_save():
+        """Persist Workflow Sequencer configuration."""
+        try:
+            save_task_sequencer_config(request.form.to_dict())
+            flash("Configuration Workflow Sequencer enregistree.", "success")
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_workflow_sequencer_config_save", exc, prefix="Erreur configuration Workflow Sequencer.")
+        return redirect(url_for("admin_workflow_sequencer_config"))
+
+
+    @app.post("/admin/workflow-sequencer/suggest-axes")
+    def admin_workflow_sequencer_suggest_axes():
+        """Suggest sequencing axes from the configured LLM."""
+        incoming_payload = request.get_json(silent=True)
+        if incoming_payload is None:
+            incoming_payload = request.form.to_dict()
+        try:
+            payload = suggest_task_sequence_axes(
+                incoming_payload,
+                actor=session.get("admin_username", "admin"),
+            )
+            return {"ok": True, **payload}
+        except ValueError as exc:
+            return api_error_response(
+                message=public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]),
+                status_code=400,
+                code="validation_error",
+            )
+        except Exception as exc:
+            return api_internal_error_response("admin_workflow_sequencer_suggest_axes", exc)
+
+
+    @app.post("/admin/workflow-sequencer/generate")
+    def admin_workflow_sequencer_generate():
+        """Generate a sequenced task plan from user input."""
+        incoming_payload = request.get_json(silent=True)
+        if incoming_payload is None:
+            incoming_payload = request.form.to_dict()
+        try:
+            result = generate_task_sequence(
+                incoming_payload,
+                actor=session.get("admin_username", "admin"),
+            )
+            if request.is_json:
+                return {"ok": True, "result": result}
+            payload = get_task_sequencer_payload()
+            return render_template(
+                "task_sequencer.html",
+                payload=payload,
+                db_error=None,
+                result=result,
+                form_values=incoming_payload,
+            )
+        except ValueError as exc:
+            if request.is_json:
+                return api_error_response(
+                    message=public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]),
+                    status_code=400,
+                    code="validation_error",
+                )
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            if request.is_json:
+                return api_internal_error_response("admin_workflow_sequencer_generate", exc)
+            flash_internal_error("admin_workflow_sequencer_generate", exc, prefix="Erreur generation Workflow Sequencer.")
+
+        try:
+            payload = get_task_sequencer_payload()
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_workflow_sequencer_generate_reload", exc)
+        return render_template(
+            "task_sequencer.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+            form_values=incoming_payload,
+        )
+
+
+    @app.get("/admin/document-vision/config")
+    def admin_document_vision_config():
+        """Render Document Vision configuration."""
+        try:
+            config = get_document_vision_config()
+            status = document_vision_status(config)
+            db_error = None
+        except Exception as exc:
+            config = None
+            status = None
+            db_error = ui_internal_error_message("admin_document_vision_config", exc)
+        try:
+            llm_configs = list_llm_configs(redact_key=True)
+            llm_config_error = None
+        except Exception as exc:
+            llm_configs = []
+            llm_config_error = ui_internal_error_message("admin_document_vision_llm_configs", exc)
+        return render_template(
+            "document_vision_config.html",
+            config=config,
+            status=status,
+            db_error=db_error,
+            llm_configs=llm_configs,
+            llm_config_error=llm_config_error,
+        )
+
+
+    @app.post("/admin/document-vision/config")
+    def admin_document_vision_config_save():
+        """Persist Document Vision configuration."""
+        try:
+            save_document_vision_config(request.form.to_dict())
+            flash("Configuration Document Vision enregistree.", "success")
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_document_vision_config_save", exc, prefix="Erreur configuration Document Vision.")
+        return redirect(url_for("admin_document_vision_config"))
+
+
+    @app.get("/admin/shard-quality/config")
+    def admin_shard_quality_config():
+        """Render Shard Quality configuration."""
+        try:
+            config = get_shard_quality_config()
+            status = shard_quality_status(config)
+            db_error = None
+        except Exception as exc:
+            config = None
+            status = None
+            db_error = ui_internal_error_message("admin_shard_quality_config", exc)
+        try:
+            llm_configs = list_llm_configs(redact_key=True)
+            llm_config_error = None
+        except Exception as exc:
+            llm_configs = []
+            llm_config_error = ui_internal_error_message("admin_shard_quality_llm_configs", exc)
+        return render_template(
+            "shard_quality_config.html",
+            config=config,
+            status=status,
+            db_error=db_error,
+            llm_configs=llm_configs,
+            llm_config_error=llm_config_error,
+        )
+
+
+    @app.post("/admin/shard-quality/config")
+    def admin_shard_quality_config_save():
+        """Persist Shard Quality configuration."""
+        try:
+            save_shard_quality_config(request.form.to_dict())
+            flash("Configuration Shard Quality enregistree.", "success")
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_shard_quality_config_save", exc, prefix="Erreur configuration Shard Quality.")
+        return redirect(url_for("admin_shard_quality_config"))
+
+
     @app.route("/admin/llm", methods=["GET", "POST"])
     def admin_llm_config():
         """Render and update the LLM configuration registry."""
@@ -375,6 +668,79 @@ def register_ui_routes(app):
             payload = None
             db_error = ui_internal_error_message("admin_llm_audit_detail", exc)
         return render_template("llm_audit_detail.html", payload=payload, db_error=db_error)
+
+
+    @app.route("/admin/llm-comparator", methods=["GET", "POST"])
+    def admin_llm_comparator():
+        """Render and run the Local LLM Comparator."""
+        form_values = {}
+        if request.method == "POST":
+            form_values = request.form.to_dict(flat=False)
+            try:
+                comparison = run_llm_comparison(
+                    request.form,
+                    files=request.files,
+                    actor=session.get("admin_username", "admin"),
+                )
+                flash("Comparaison LLM terminee.", "success")
+                return redirect(
+                    url_for(
+                        "admin_llm_comparator_detail",
+                        run_id=comparison["run_id"],
+                    )
+                )
+            except ValueError as exc:
+                flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+            except Exception as exc:
+                flash_internal_error("admin_llm_comparator", exc, prefix="Erreur Comparator LLM.")
+
+        try:
+            payload = get_llm_comparator_payload()
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_llm_comparator", exc)
+        return render_template(
+            "llm_comparator.html",
+            payload=payload,
+            db_error=db_error,
+            form_values=form_values,
+        )
+
+
+    @app.get("/admin/llm-comparator/runs/<run_id>")
+    def admin_llm_comparator_detail(run_id):
+        """Show one Local LLM Comparator run."""
+        try:
+            payload = get_llm_comparator_run_detail(run_id)
+            db_error = None
+        except ValueError as exc:
+            payload = None
+            db_error = public_exception_message(exc, DEFAULT_ERROR_MESSAGES["not_found"])
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("admin_llm_comparator_detail", exc)
+        return render_template("llm_comparator_detail.html", payload=payload, db_error=db_error)
+
+
+    @app.get("/admin/llm-comparator/runs/<run_id>/export")
+    def admin_llm_comparator_export(run_id):
+        """Export one Local LLM Comparator run."""
+        try:
+            filename, mimetype, body = export_llm_comparator_run(
+                run_id,
+                request.args.get("format", "json"),
+            )
+            return Response(
+                body,
+                mimetype=mimetype,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["not_found"]), "error")
+        except Exception as exc:
+            flash_internal_error("admin_llm_comparator_export", exc, prefix="Erreur export Comparator LLM.")
+        return redirect(url_for("admin_llm_comparator_detail", run_id=run_id))
 
 
     @app.route("/admin/webchat", methods=["GET"])
@@ -1050,6 +1416,61 @@ def register_ui_routes(app):
         return redirect(url_for("admin_dashboard"))
 
 
+    @app.get("/projects/<project_slug>/document-vision")
+    def project_document_vision(project_slug):
+        """Render Document Vision upload/analyze page for one project."""
+        try:
+            payload = get_document_vision_project_payload(project_slug)
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("project_document_vision", exc)
+        return render_template(
+            "document_vision.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+        )
+
+
+    @app.post("/projects/<project_slug>/document-vision/analyze")
+    @require_scopes("write")
+    def project_document_vision_analyze(project_slug):
+        """Analyze an uploaded image/PDF with Document Vision."""
+        try:
+            result = analyze_project_document(
+                project_slug,
+                request.files.get("document_file"),
+                request.form.to_dict(),
+                actor=session.get("admin_username", "admin"),
+            )
+            payload = get_document_vision_project_payload(project_slug)
+            flash("Document analyse par Document Vision.", "success")
+            return render_template(
+                "document_vision.html",
+                payload=payload,
+                db_error=None,
+                result=result,
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("project_document_vision_analyze", exc, prefix="Erreur Document Vision.")
+
+        try:
+            payload = get_document_vision_project_payload(project_slug)
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("project_document_vision_reload", exc)
+        return render_template(
+            "document_vision.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+        )
+
+
     @app.get("/projects/<project_slug>/shards/new")
     def project_shard_new(project_slug):
         """Handle the project shard new request."""
@@ -1076,6 +1497,61 @@ def register_ui_routes(app):
             shard = None
             db_error = ui_internal_error_message("project_shard_view", exc)
         return render_template("shard_view.html", payload=payload, shard=shard, db_error=db_error)
+
+
+    @app.get("/projects/<project_slug>/shards/<shard_uuid>/quality")
+    def project_shard_quality(project_slug, shard_uuid):
+        """Render Shard Quality analysis for one shard."""
+        try:
+            payload = get_shard_quality_payload(project_slug, shard_uuid)
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("project_shard_quality", exc)
+        return render_template(
+            "shard_quality.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+        )
+
+
+    @app.post("/projects/<project_slug>/shards/<shard_uuid>/quality/analyze")
+    @require_scopes("write")
+    def project_shard_quality_analyze(project_slug, shard_uuid):
+        """Analyze one shard with Shard Quality."""
+        try:
+            result = analyze_shard_quality(
+                project_slug,
+                shard_uuid,
+                request.form.to_dict(),
+                actor=session.get("admin_username", "admin"),
+            )
+            payload = get_shard_quality_payload(project_slug, shard_uuid)
+            flash("Analyse Shard Quality terminee.", "success")
+            return render_template(
+                "shard_quality.html",
+                payload=payload,
+                db_error=None,
+                result=result,
+            )
+        except ValueError as exc:
+            flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")
+        except Exception as exc:
+            flash_internal_error("project_shard_quality_analyze", exc, prefix="Erreur Shard Quality.")
+
+        try:
+            payload = get_shard_quality_payload(project_slug, shard_uuid)
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("project_shard_quality_reload", exc)
+        return render_template(
+            "shard_quality.html",
+            payload=payload,
+            db_error=db_error,
+            result=None,
+        )
 
 
     @app.get("/projects/<project_slug>/shard-list")
@@ -1304,6 +1780,42 @@ def register_ui_routes(app):
             projects = []
             db_error = ui_internal_error_message("projects_shards", exc)
         return render_template("project_shards.html", projects=projects, db_error=db_error)
+
+
+    @app.get("/projects/chunks")
+    def projects_chunks():
+        """Render the project chunk factory overview."""
+        try:
+            projects = list_projects_shards()
+            db_error = None
+        except Exception as exc:
+            projects = []
+            db_error = ui_internal_error_message("projects_chunks", exc)
+        return render_template("project_chunks.html", projects=projects, db_error=db_error)
+
+
+    @app.get("/projects/document-vision")
+    def projects_document_vision():
+        """Render the project Document Vision entrypoints."""
+        try:
+            projects = list_projects_shards()
+            db_error = None
+        except Exception as exc:
+            projects = []
+            db_error = ui_internal_error_message("projects_document_vision", exc)
+        return render_template("project_document_vision_index.html", projects=projects, db_error=db_error)
+
+
+    @app.get("/projects/shard-quality")
+    def projects_shard_quality():
+        """Render the project Shard Quality entrypoints."""
+        try:
+            payload = get_shard_quality_index_payload()
+            db_error = None
+        except Exception as exc:
+            payload = None
+            db_error = ui_internal_error_message("projects_shard_quality", exc)
+        return render_template("shard_quality_index.html", payload=payload, db_error=db_error)
 
 
     @app.get("/projects/train")

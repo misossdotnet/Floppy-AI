@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Sequencer | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Tools</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('admin_workflow_sequencer_config') }}">Configuration Workflow Sequencer</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Workflow Sequencer</h1>
+      <p class="lead">Creation d'un plan par sequences a partir d'un contexte, d'un type de tache et d'axes de workflow proposes ou saisis.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Module</p>
+            <p class="kpi-value">{% if payload.status.enabled %}Actif{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if payload.status.configured %}Configure{% else %}Incomplet{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ payload.status.model or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Executions</p>
+            <p class="kpi-value">{{ payload.runs | length }}</p>
+          </article>
+        </div>
+        {% if payload.status.db_error %}
+          <div class="alert error">{{ payload.status.db_error }}</div>
+        {% elif not payload.status.available %}
+          <div class="alert error">Workflow Sequencer est indisponible tant que le module ou sa configuration LLM est incomplete.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Nouvelle sequence</h2>
+        <form id="taskSequencerForm" method="post" action="{{ url_for('admin_workflow_sequencer_generate') }}" class="train-form">
+          <input id="axesSuggestionsJson" type="hidden" name="axes_suggestions_json" value="{{ form_values.get('axes_suggestions_json', '') }}">
+          <div class="train-grid">
+            <label class="full-span">Contexte
+              <textarea id="contextText" name="context_text" rows="9" required>{{ form_values.get("context_text", "") }}</textarea>
+            </label>
+            <label class="full-span">Type de tache a sequencer
+              <textarea id="taskType" name="task_type" rows="3" required>{{ form_values.get("task_type", "") }}</textarea>
+            </label>
+            <label class="full-span">Axes de workflow retenus
+              <textarea id="sequencingAxes" name="sequencing_axes" rows="4" required>{{ form_values.get("sequencing_axes", "") }}</textarea>
+            </label>
+          </div>
+          <div class="agentai-actions">
+            <button id="suggestAxesButton" type="button" class="ghost-button" disabled>
+              <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+              Suggerer axes
+            </button>
+            <button id="generateSequenceButton" type="submit" class="icon-btn icon-run" title="Generer le workflow" aria-label="Generer le workflow" disabled></button>
+            <span id="axesStatus" class="muted-line"></span>
+          </div>
+        </form>
+
+        <div id="axesSuggestions" class="suggestion-grid" hidden></div>
+      </section>
+
+      {% if result %}
+        <section class="card">
+          <div class="project-head">
+            <div>
+              <h2>{{ result.title }}</h2>
+              {% if result.summary %}
+                <p class="lead">{{ result.summary }}</p>
+              {% endif %}
+            </div>
+            <span class="stat-chip">Run {{ result.run_id }}</span>
+          </div>
+          <div class="views-nav">
+            {% if result.audit_session_id %}
+              <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=result.audit_session_id) }}">Audit LLM</a>
+            {% endif %}
+          </div>
+          <div class="sequence-plan">
+            {% for sequence in result.sequences %}
+              <article class="pipeline-step">
+                <div class="project-head">
+                  <h3>{{ sequence.sequence_no }}. {{ sequence.title }}</h3>
+                  <span class="stat-chip">{{ sequence.tasks | length }} action(s)</span>
+                </div>
+                {% if sequence.objective %}
+                  <p>{{ sequence.objective }}</p>
+                {% endif %}
+                {% if sequence.tasks %}
+                  <ol class="sequence-task-list">
+                    {% for task in sequence.tasks %}
+                      <li>
+                        <strong>{{ task.title }}</strong>
+                        {% if task.description %}<p>{{ task.description }}</p>{% endif %}
+                        {% if task.expected_output %}<p><span class="muted-line">Livrable:</span> {{ task.expected_output }}</p>{% endif %}
+                        {% if task.dependencies %}
+                          <p><span class="muted-line">Dependances:</span> {{ task.dependencies | join(", ") }}</p>
+                        {% endif %}
+                        {% if task.estimate %}<p><span class="muted-line">Estimation:</span> {{ task.estimate }}</p>{% endif %}
+                      </li>
+                    {% endfor %}
+                  </ol>
+                {% endif %}
+                {% if sequence.validation_checkpoints %}
+                  <p class="muted-line">Points de validation</p>
+                  <ul class="plain-list">
+                    {% for item in sequence.validation_checkpoints %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+                {% if sequence.risks %}
+                  <p class="muted-line">Risques</p>
+                  <ul class="plain-list">
+                    {% for item in sequence.risks %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                {% endif %}
+              </article>
+            {% endfor %}
+          </div>
+          {% if result.open_questions %}
+            <h3>Questions ouvertes</h3>
+            <ul class="plain-list">
+              {% for item in result.open_questions %}
+                <li>{{ item }}</li>
+              {% endfor %}
+            </ul>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      <section class="card">
+        <h2>Dernieres executions</h2>
+        {% if payload.runs %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Titre</th>
+                  <th>Type</th>
+                  <th>Acteur</th>
+                  <th>Audit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for run in payload.runs %}
+                  <tr>
+                    <td>{{ run.created_at }}</td>
+                    <td>{{ run.title or run.run_id }}</td>
+                    <td>{{ run.task_type or '-' }}</td>
+                    <td>{{ run.actor or '-' }}</td>
+                    <td>
+                      {% if run.plan_audit_session_id %}
+                        <a class="ghost-link" href="{{ url_for('admin_llm_audit_detail', session_id=run.plan_audit_session_id) }}">Ouvrir</a>
+                      {% else %}
+                        -
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucune execution Workflow Sequencer.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+
+  <script>
+    (() => {
+      const form = document.getElementById("taskSequencerForm");
+      if (!form) return;
+
+      const contextText = document.getElementById("contextText");
+      const taskType = document.getElementById("taskType");
+      const sequencingAxes = document.getElementById("sequencingAxes");
+      const suggestionsJson = document.getElementById("axesSuggestionsJson");
+      const suggestButton = document.getElementById("suggestAxesButton");
+      const generateButton = document.getElementById("generateSequenceButton");
+      const statusLine = document.getElementById("axesStatus");
+      const suggestionsBox = document.getElementById("axesSuggestions");
+      const endpoint = "{{ url_for('admin_workflow_sequencer_suggest_axes') }}";
+
+      function readyContext() {
+        return contextText.value.trim().length > 0;
+      }
+
+      function syncButtons() {
+        suggestButton.disabled = !readyContext();
+        generateButton.disabled = !(
+          readyContext() &&
+          taskType.value.trim().length > 0 &&
+          sequencingAxes.value.trim().length > 0
+        );
+      }
+
+      function setStatus(message, isError = false) {
+        statusLine.textContent = message || "";
+        statusLine.classList.toggle("status-error", Boolean(isError));
+      }
+
+      function applyAxis(axis) {
+        const parts = [axis.label || "", axis.description || ""].filter(Boolean);
+        sequencingAxes.value = parts.join(" - ");
+        syncButtons();
+      }
+
+      function renderSuggestions(payload) {
+        suggestionsBox.innerHTML = "";
+        const axes = Array.isArray(payload.axes) ? payload.axes : [];
+        axes.forEach((axis) => {
+          const article = document.createElement("article");
+          article.className = "axis-card";
+
+          const title = document.createElement("h3");
+          title.textContent = axis.label || axis.axis_id || "Axe";
+          article.appendChild(title);
+
+          if (axis.description) {
+            const description = document.createElement("p");
+            description.textContent = axis.description;
+            article.appendChild(description);
+          }
+
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "ghost-button";
+          button.textContent = axis.recommended ? "Utiliser recommande" : "Utiliser";
+          button.addEventListener("click", () => applyAxis(axis));
+          article.appendChild(button);
+
+          suggestionsBox.appendChild(article);
+        });
+
+        suggestionsJson.value = JSON.stringify({
+          axes,
+          guidance: payload.guidance || "",
+          audit_session_id: payload.audit_session_id || "",
+          generated_at: payload.generated_at || "",
+        });
+        suggestionsBox.hidden = axes.length === 0;
+        setStatus(payload.guidance || `${axes.length} axe(s) propose(s).`);
+      }
+
+      [contextText, taskType, sequencingAxes].forEach((field) => {
+        field.addEventListener("input", syncButtons);
+      });
+
+      suggestButton.addEventListener("click", async () => {
+        if (!readyContext()) return;
+        suggestButton.disabled = true;
+        setStatus("Generation des axes...");
+        try {
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({
+              context_text: contextText.value,
+              task_type: taskType.value,
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok || !payload.ok) {
+            const message = payload.error && payload.error.message ? payload.error.message : "Suggestion impossible.";
+            throw new Error(message);
+          }
+          renderSuggestions(payload);
+        } catch (error) {
+          setStatus(error.message || "Suggestion impossible.", true);
+        } finally {
+          syncButtons();
+        }
+      });
+
+      syncButtons();
+    })();
+  </script>
+</body>
+</html>

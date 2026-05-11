@@ -34,12 +34,20 @@
     </div>
 
     <div class="nav-block">
-      <p class="nav-title">Datas Warehouse</p>
+      <p class="nav-title">Factory</p>
+      <a href="{{ url_for('admin_dashboard') }}"><i class="fa-solid fa-folder-tree" aria-hidden="true"></i>Project</a>
+      <a href="{{ url_for('projects_document_vision') }}"><i class="fa-solid fa-file-invoice" aria-hidden="true"></i>Document Vision</a>
       <a href="{{ url_for('projects_shards') }}"><i class="fa-solid fa-layer-group" aria-hidden="true"></i>Shard</a>
-      <a href="{{ url_for('projects_shards') }}"><i class="fa-solid fa-cubes-stacked" aria-hidden="true"></i>Chunk</a>
-      <a href="{{ url_for('admin_document_review') }}"><i class="fa-solid fa-clipboard-check" aria-hidden="true"></i>Revue documents</a>
+      <a class="nav-subitem" href="{{ url_for('admin_document_review') }}"><i class="fa-solid fa-clipboard-check" aria-hidden="true"></i>Revue documents</a>
+      <a class="nav-subitem" href="{{ url_for('projects_shard_quality') }}"><i class="fa-solid fa-chart-line" aria-hidden="true"></i>Shard Quality</a>
+      <a class="nav-subitem" href="{{ url_for('admin_chunking_config') }}"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>Shard-To-Chunk</a>
+      <a href="{{ url_for('projects_chunks') }}"><i class="fa-solid fa-cubes-stacked" aria-hidden="true"></i>Chunk</a>
       <a href="{{ url_for('projects_train') }}"><i class="fa-solid fa-graduation-cap" aria-hidden="true"></i>Train</a>
-      <a href="{{ url_for('admin_chat_evaluations') }}"><i class="fa-solid fa-comments" aria-hidden="true"></i>Chat / Chat Evaluation</a>
+    </div>
+
+    <div class="nav-block">
+      <p class="nav-title">Observability</p>
+      <a href="{{ url_for('admin_chat_evaluations') }}"><i class="fa-solid fa-comments" aria-hidden="true"></i>Outside Chat Evaluation</a>
       <a href="{{ url_for('admin_webchat_sessions') }}"><i class="fa-solid fa-comment-dots" aria-hidden="true"></i>WebChat Chat Evaluation</a>
       <a href="{{ url_for('admin_quizbot_sessions') }}"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>QuizBot Chat Evaluation</a>
     </div>
@@ -47,17 +55,21 @@
     <div class="nav-block">
       <p class="nav-title">Tools</p>
       <a href="{{ url_for('admin_faq') }}"><i class="fa-solid fa-circle-info" aria-hidden="true"></i>FAQ Modules</a>
+      <a href="{{ url_for('admin_workflow_sequencer') }}"><i class="fa-solid fa-list-ol" aria-hidden="true"></i>Workflow Sequencer</a>
+      <a href="{{ url_for('admin_llm_comparator') }}"><i class="fa-solid fa-scale-balanced" aria-hidden="true"></i>LLM Comparator</a>
       <a href="{{ url_for('agentai_docs') }}"><i class="fa-solid fa-file-pen" aria-hidden="true"></i>AgentAI Files Generator</a>
       <a href="{{ url_for('html_to_md_tool') }}"><i class="fa-brands fa-markdown" aria-hidden="true"></i>HTML TO MD</a>
     </div>
 
     <div class="nav-block">
       <p class="nav-title">Configuration</p>
-      <a href="{{ url_for('admin_chunking_config') }}"><i class="fa-solid fa-diagram-project" aria-hidden="true"></i>Shard-To-Chunk</a>
       <a href="{{ url_for('admin_llm_config') }}"><i class="fa-solid fa-microchip" aria-hidden="true"></i>Configuration LLM</a>
       <a href="{{ url_for('admin_vectorization') }}"><i class="fa-solid fa-vector-square" aria-hidden="true"></i>Configuration Vectorisation</a>
       <a href="{{ url_for('admin_webchat') }}"><i class="fa-solid fa-comments-dollar" aria-hidden="true"></i>Configuration WebChat</a>
       <a href="{{ url_for('admin_quizbot_config') }}"><i class="fa-solid fa-list-check" aria-hidden="true"></i>Configuration QuizBot</a>
+      <a href="{{ url_for('admin_workflow_sequencer_config') }}"><i class="fa-solid fa-timeline" aria-hidden="true"></i>Configuration Workflow Sequencer</a>
+      <a href="{{ url_for('admin_document_vision_config') }}"><i class="fa-solid fa-eye" aria-hidden="true"></i>Configuration Document Vision</a>
+      <a href="{{ url_for('admin_shard_quality_config') }}"><i class="fa-solid fa-chart-line" aria-hidden="true"></i>Configuration Shard Quality</a>
     </div>
   {% else %}
     <div class="nav-block">

@@ -43,10 +43,13 @@ LLM_PROFILE_TYPES = (
     "chunk",
     "trunk",
     "ocr",
+    "vision",
+    "quality",
     "chat",
     "embedding",
     "webchat",
     "quiz",
+    "sequencing",
     "agent",
     "custom",
 )
@@ -812,7 +815,15 @@ def llm_connection_status(config_id=""):
     return payload
 
 
-def build_chat_request_payload(config, messages, temperature, max_tokens=None, json_mode=False):
+def build_chat_request_payload(
+    config,
+    messages,
+    temperature,
+    max_tokens=None,
+    json_mode=False,
+    tools=None,
+    tool_choice=None,
+):
     """Build provider-specific chat request JSON."""
     if is_ollama_native_config(config):
         options = {"temperature": temperature}
@@ -826,6 +837,8 @@ def build_chat_request_payload(config, messages, temperature, max_tokens=None, j
         }
         if json_mode:
             payload["format"] = "json"
+        if tools:
+            payload["tools"] = tools
         return payload
 
     payload = {
@@ -837,6 +850,10 @@ def build_chat_request_payload(config, messages, temperature, max_tokens=None, j
         payload["max_tokens"] = normalize_max_tokens(max_tokens)
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
+    if tools:
+        payload["tools"] = tools
+    if tool_choice:
+        payload["tool_choice"] = tool_choice
     return payload
 
 
@@ -1098,6 +1115,8 @@ def call_llm_chat_completion_with_config(
     max_tokens=None,
     retries=None,
     json_mode=None,
+    tools=None,
+    tool_choice=None,
 ):
     """Call a provided LLM config and persist the complete exchange in audit tables."""
     config = normalize_runtime_config(config)
@@ -1125,6 +1144,8 @@ def call_llm_chat_completion_with_config(
         temperature,
         max_tokens=resolved_max_tokens,
         json_mode=resolved_json_mode,
+        tools=tools,
+        tool_choice=tool_choice,
     )
     max_attempts = normalize_retries(resolved_retries)
     last_error_message = ""
@@ -1241,6 +1262,8 @@ def call_llm_chat_completion(
     max_tokens=None,
     retries=None,
     json_mode=None,
+    tools=None,
+    tool_choice=None,
 ):
     """Call the active LLM and persist the complete exchange in audit tables."""
     config = effective_llm_config(redact_key=False, config_id=config_id)
@@ -1253,6 +1276,8 @@ def call_llm_chat_completion(
         max_tokens=max_tokens,
         retries=retries,
         json_mode=json_mode,
+        tools=tools,
+        tool_choice=tool_choice,
     )
 
 

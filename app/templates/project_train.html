@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vue Train | Floppy-AI | Datas Warehouse</title>
+  <title>Train | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Train</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
-        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Vue shards</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
       </div>
-      <h1>Vue train</h1>
+      <h1>Train</h1>
       <p class="lead">
         Cette vue est dediee a la saisie des exemples d'entrainement par projet.
       </p>
@@ -55,7 +55,10 @@
             Table: <code>{{ project.train_table }}</code> / <code>{{ project.chat_evaluation_table }}</code>
           </p>
           <p class="muted-line">
-            <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Ouvrir Chat-list</a>
+            <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard</a>
+            <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk</a>
+            <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=project.slug) }}">Document Vision</a>
+            <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Outside Chat</a>
           </p>
 
           <form method="post" action="{{ url_for('add_train_item', project_slug=project.slug) }}" class="train-form">

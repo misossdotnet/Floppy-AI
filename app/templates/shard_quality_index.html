@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shard Quality | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Shard Quality</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
+        <a class="ghost-link" href="{{ url_for('admin_shard_quality_config') }}">Configuration Shard Quality</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Shard Quality</h1>
+      <p class="lead">Analyse de coherence intellectuelle d'un shard: titre, mise en evidence, architecture des idees et concepts fondamentaux.</p>
+    </section>
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Module</p>
+            <p class="kpi-value">{% if payload.status.enabled %}Actif{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if payload.status.configured %}Configure{% else %}Incomplet{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ payload.status.model or '-' }}</p>
+          </article>
+        </div>
+      </section>
+
+      {% if payload.projects %}
+        {% for project in payload.projects %}
+          <section class="card project-card">
+            <div class="project-head">
+              <h2>{{ project.name }}</h2>
+              <div class="project-stats">
+                <span class="stat-chip"><strong>{{ project.shard_count }}</strong> shard(s)</span>
+                <span class="stat-chip"><strong>{{ project.total_chunks }}</strong> chunk(s)</span>
+              </div>
+            </div>
+            <p class="muted-line">
+              Slug: <code>{{ project.slug }}</code> |
+              Table: <code>{{ project.shard_table }}</code>
+            </p>
+            {% if project.shards %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Shard UUID</th>
+                      <th>Titre</th>
+                      <th>Source</th>
+                      <th>Chunks</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for shard in project.shards %}
+                      <tr>
+                        <td><code>{{ shard.uuid }}</code></td>
+                        <td>{{ shard.title_document or '-' }}</td>
+                        <td>{{ shard.source_document or '-' }}</td>
+                        <td><strong>{{ shard.chunk_count }}</strong></td>
+                        <td>
+                          <a class="ghost-link" href="{{ url_for('project_shard_quality', project_slug=project.slug, shard_uuid=shard.uuid) }}">Analyser qualite</a>
+                          <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=project.slug, shard_uuid=shard.uuid) }}">Voir shard</a>
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            {% else %}
+              <p class="empty">Aucun shard disponible pour ce projet.</p>
+            {% endif %}
+          </section>
+        {% endfor %}
+      {% else %}
+        <section class="card">
+          <p class="empty">Aucun projet disponible.</p>
+        </section>
+      {% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>

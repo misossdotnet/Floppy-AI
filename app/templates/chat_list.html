@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat List | Floppy-AI | Datas Warehouse</title>
+  <title>Outside Chat | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Observability</p>
+      <p class="brand-tag">Outside Chat Evaluation</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
         {% if payload %}
-          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
-          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chat_dashboard', project_slug=payload.project.slug) }}">Chat-dashboard</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_dashboard', project_slug=payload.project.slug) }}">Outside dashboard</a>
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk</a>
         {% endif %}
       </div>
-      <h1>Chat list</h1>
+      <h1>Outside Chat</h1>
       {% if payload %}
         <p class="lead">Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
       {% endif %}

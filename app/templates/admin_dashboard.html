@@ -14,16 +14,18 @@
       <p class="brand-tag">Administration</p>
       <div class="views-nav">
         <a class="ghost-link" href="{{ url_for('home') }}">Espace public</a>
-        <a class="ghost-link" href="{{ url_for('agentai_docs') }}">AgentAI Docs</a>
-        <a class="ghost-link" href="{{ url_for('admin_webchat') }}">Webchat public</a>
-        <a class="ghost-link" href="{{ url_for('admin_quizbot_dashboard') }}">QuizBot</a>
+        <a class="ghost-link" href="{{ url_for('projects_document_vision') }}">Document Vision</a>
+        <a class="ghost-link" href="{{ url_for('projects_shards') }}">Shard</a>
+        <a class="ghost-link" href="{{ url_for('projects_chunks') }}">Chunk</a>
+        <a class="ghost-link" href="{{ url_for('projects_train') }}">Train</a>
+        <a class="ghost-link" href="{{ url_for('admin_chat_evaluations') }}">Observability</a>
+        <a class="ghost-link" href="{{ url_for('admin_faq') }}">FAQ Modules</a>
         <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
-        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
         <form method="post" action="{{ url_for('admin_logout') }}" class="inline-form">
           <button class="ghost-button" type="submit">Deconnexion</button>
         </form>
       </div>
-      <h1>Tableau de bord</h1>
+      <h1>Project</h1>
       <p class="lead">
         Supervision des projets, modules de preparation de donnees, configuration LLM et suivi des sessions.
       </p>
@@ -126,11 +128,13 @@
                   <td><code>{{ project.uuid }}</code></td>
                   <td>
                     <div class="action-row">
-                      <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard-list</a>
-                      <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Revue</a>
-                      <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=project.slug) }}">Train-list</a>
-                      <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk-list</a>
-                      <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Chat-list</a>
+                      <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=project.slug) }}">Document Vision</a>
+                      <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard</a>
+                      <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Revue documents</a>
+                      <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ project.slug }}">Shard-To-Chunk</a>
+                      <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk</a>
+                      <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=project.slug) }}">Train</a>
+                      <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Outside Chat</a>
                       <form method="post" action="{{ url_for('remove_project', project_slug=project.slug) }}" class="inline-form">
                         <button type="submit" class="danger-btn icon-btn icon-delete" title="Supprimer projet" aria-label="Supprimer projet"></button>
                       </form>

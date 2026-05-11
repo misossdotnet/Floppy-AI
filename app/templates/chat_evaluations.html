@@ -3,16 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat Evaluation | Floppy-AI</title>
+  <title>Outside Chat Evaluation | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero compact-hero">
-      <p class="eyebrow">Datas Warehouse</p>
-      <p class="brand-tag">Chat evaluation</p>
-      <h1>Chat / Chat Evaluation</h1>
+      <p class="eyebrow">Observability</p>
+      <p class="brand-tag">Outside Chat Evaluation</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('admin_webchat_sessions') }}">WebChat Chat Evaluation</a>
+        <a class="ghost-link" href="{{ url_for('admin_quizbot_sessions') }}">QuizBot Chat Evaluation</a>
+      </div>
+      <h1>Outside Chat Evaluation</h1>
       <p class="lead">Acces aux sessions `{slug}_chat` et aux evaluations `{slug}_chat_evaluation` par projet.</p>
     </section>
 

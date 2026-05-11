@@ -3,24 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shard List | Floppy-AI | Datas Warehouse</title>
+  <title>Shard | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Shard</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
         {% if payload %}
-          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Chat-list</a>
+          <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=payload.project.slug) }}">Document Vision</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}">Chunk</a>
+          <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=payload.project.slug) }}">Train</a>
+          <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=payload.project.slug) }}">Outside Chat</a>
         {% endif %}
       </div>
-      <h1>Shard list</h1>
+      <h1>Shard</h1>
       {% if payload %}
         <p class="lead">Projet: <code>{{ payload.project.name }}</code> / <code>{{ payload.project.slug }}</code></p>
       {% endif %}
@@ -46,10 +47,12 @@
       <section class="card">
         <h2>Actions</h2>
         <div class="action-row">
+          <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=payload.project.slug) }}">Document Vision</a>
           <a class="ghost-link" href="{{ url_for('project_shard_new', project_slug=payload.project.slug) }}">Nouveau shard</a>
-          <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=payload.project.slug) }}">Nouveau chunk</a>
-          <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ payload.project.slug }}">Shard-To-Chunk LLM</a>
           <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ payload.project.slug }}">Revue documents</a>
+          <a class="ghost-link" href="{{ url_for('projects_shard_quality') }}">Shard Quality</a>
+          <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ payload.project.slug }}">Shard-To-Chunk</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_new', project_slug=payload.project.slug) }}">Nouveau chunk</a>
         </div>
       </section>
 
@@ -87,7 +90,8 @@
                       <div class="action-row">
                         <a class="ghost-link" href="{{ url_for('project_shard_view', project_slug=payload.project.slug, shard_uuid=shard.uuid) }}">Visualiser</a>
                         <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=payload.project.slug, document_id=shard.uuid) }}">Revue</a>
-                        <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ shard.uuid }}">Chunk-list</a>
+                        <a class="ghost-link" href="{{ url_for('project_shard_quality', project_slug=payload.project.slug, shard_uuid=shard.uuid) }}">Qualite</a>
+                        <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ shard.uuid }}">Chunk</a>
                         <form method="post" action="{{ url_for('remove_shard_item', project_slug=payload.project.slug, shard_uuid=shard.uuid) }}" class="inline-form">
                           <button
                             type="submit"

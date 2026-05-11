@@ -13,7 +13,7 @@
       <p class="eyebrow">Floppy-AI</p>
       <p class="brand-tag">FAQ</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
       </div>
       <h1>FAQ des modules</h1>
       <p class="lead">
@@ -41,6 +41,61 @@
         <article class="kpi-card">
           <p class="kpi-label">Usage</p>
           <p>Importer, decouper, verifier la qualite et conserver la lineage des contenus.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>Document Vision</h2>
+        <span class="stat-chip">OCR / RAG</span>
+      </div>
+      <p class="lead">
+        Document Vision permet a un utilisateur connecte d'ajouter un document
+        image ou PDF dans le contexte d'un projet. Le fichier est analyse par un
+        LLM vision-langage configure pour extraire le texte, interpreter la mise
+        en page, identifier les tableaux et produire un Markdown pret a devenir
+        un shard exploitable pour les futurs workflows RAG.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Transformer des documents visuels ou scannes en contenu structure, tracable et indexable.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Uploader un PDF ou une image depuis un projet, lancer l'analyse LLM, puis creer un shard depuis l'extraction.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Configuration</p>
+          <p>Selectionner un LLM profile <code>vision</code>, ajuster prompts, max tokens, taille fichier et creation automatique de shard.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>Shard Quality</h2>
+        <span class="stat-chip">Qualite documentaire</span>
+      </div>
+      <p class="lead">
+        Shard Quality evalue la coherence intellectuelle d'un shard. Le module
+        verifie la relation entre le titre et le contenu, le signalement des
+        informations importantes, l'organisation des idees et l'equilibre des
+        concepts fondamentaux.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Identifier rapidement si un shard est suffisamment clair, structure et pertinent pour le RAG.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Ouvrir un shard, lancer l'analyse, puis consulter score, constats, problemes et actions prioritaires.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Trace</p>
+          <p>Chaque analyse conserve les metriques locales, le resultat JSON et l'audit LLM.</p>
         </article>
       </div>
     </section>
@@ -110,6 +165,29 @@
         <article class="kpi-card">
           <p class="kpi-label">QuizBot</p>
           <p>Tester generation, correction, scoring et feedback utilisateur sur des sujets controles.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="project-head">
+        <h2>Workflow Sequencer</h2>
+        <span class="stat-chip">Planification LLM</span>
+      </div>
+      <p class="lead">
+        Workflow Sequencer aide un utilisateur connecte a transformer un contexte
+        operationnel en sequences de travail. Le LLM peut proposer des axes de
+        sequencage, puis produire un plan structure avec actions, livrables,
+        dependances, controles et risques.
+      </p>
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <p class="kpi-label">Objectif</p>
+          <p>Passer d'une intention ou d'un contexte complexe a un ordre d'execution exploitable.</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Usage</p>
+          <p>Saisir le contexte, choisir les axes, puis generer le decoupage sequentiel.</p>
         </article>
       </div>
     </section>

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Configuration Shard Quality | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Configuration</p>
+      <p class="brand-tag">Factory</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('projects_shard_quality') }}">Shard Quality</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Configuration Shard Quality</h1>
+      <p class="lead">Parametres LLM utilises pour evaluer la coherence intellectuelle d'un shard.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if llm_config_error %}
+      <section class="card">
+        <div class="alert error">{{ llm_config_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if config %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Module</p>
+            <p class="kpi-value">{% if status.enabled %}Actif{% else %}Inactif{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">LLM</p>
+            <p class="kpi-value">{% if status.configured %}Configure{% else %}Incomplet{% endif %}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Provider</p>
+            <p class="kpi-value">{{ status.provider or '-' }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Modele</p>
+            <p class="kpi-value">{{ status.model or '-' }}</p>
+          </article>
+        </div>
+        {% if status.db_error %}
+          <div class="alert error">{{ status.db_error }}</div>
+        {% elif not status.available %}
+          <div class="alert error">Shard Quality est indisponible tant que le module ou sa configuration LLM est incomplete.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Configuration</h2>
+        <form method="post" action="{{ url_for('admin_shard_quality_config_save') }}" class="train-form">
+          <div class="train-grid">
+            <label class="checkbox-row">
+              <input type="checkbox" name="enabled" {% if config.enabled %}checked{% endif %}>
+              Activer Shard Quality
+            </label>
+            <label>Configuration LLM
+              <select name="llm_config_id">
+                <option value="" {% if not config.llm_config_id %}selected{% endif %}>Configuration par defaut</option>
+                {% for llm_config in llm_configs %}
+                  <option value="{{ llm_config.config_id }}" {% if config.llm_config_id == llm_config.config_id %}selected{% endif %}>
+                    {{ llm_config.name }} ({{ llm_config.profile_type or "general" }} / {{ llm_config.provider }} / {{ llm_config.model }})
+                  </option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Temperature
+              <input type="number" name="temperature" value="{{ config.temperature }}" min="0" max="2" step="0.1">
+            </label>
+            <label>Max tokens sortie
+              <input type="number" name="max_tokens" value="{{ config.max_tokens }}" min="256" max="8000">
+            </label>
+            <label>Taille max entree caracteres
+              <input type="number" name="max_input_chars" value="{{ config.max_input_chars }}" min="2000" max="200000">
+            </label>
+            <label class="full-span">Prompt systeme
+              <textarea name="system_prompt" rows="8" required>{{ config.system_prompt }}</textarea>
+            </label>
+            <label class="full-span">Prompt analyse
+              <textarea name="analysis_prompt" rows="14" required>{{ config.analysis_prompt }}</textarea>
+            </label>
+          </div>
+          <button type="submit" class="icon-btn icon-save" title="Enregistrer configuration" aria-label="Enregistrer configuration"></button>
+        </form>
+        <p class="muted-line">Utilisez idealement une configuration LLM avec le profil <code>quality</code>.</p>
+        {% if config.updated_at %}
+          <p class="muted-line">Derniere mise a jour: {{ config.updated_at }}</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+</body>
+</html>

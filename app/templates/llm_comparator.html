@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local LLM Comparator | Floppy-AI</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  {% include "_nav.html" %}
+  <main class="page">
+    <section class="hero compact-hero">
+      <p class="eyebrow">Tools</p>
+      <p class="brand-tag">Administration</p>
+      <div class="views-nav">
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_config') }}">Configuration LLM</a>
+        <a class="ghost-link" href="{{ url_for('admin_llm_audit') }}">Journal LLM</a>
+      </div>
+      <h1>Local LLM Comparator</h1>
+      <p class="lead">Comparaison de modeles Ollama locaux avec prompts bilingues, metriques, sorties lisibles et exports.</p>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="card">
+          {% for category, message in messages %}
+            <div class="alert {{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if db_error %}
+      <section class="card">
+        <div class="alert error">{{ db_error }}</div>
+      </section>
+    {% endif %}
+
+    {% if payload %}
+      <section class="card">
+        <h2>Status</h2>
+        <div class="kpi-grid">
+          <article class="kpi-card">
+            <p class="kpi-label">Modeles Ollama</p>
+            <p class="kpi-value">{{ payload.model_options | length }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Benchmarks</p>
+            <p class="kpi-value">{{ payload.benchmarks | length }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Runs</p>
+            <p class="kpi-value">{{ payload.recent_runs | length }}</p>
+          </article>
+          <article class="kpi-card">
+            <p class="kpi-label">Mode</p>
+            <p class="kpi-value">Admin</p>
+          </article>
+        </div>
+        {% if payload.model_errors %}
+          {% for message in payload.model_errors %}
+            <div class="alert error">Decouverte Ollama incomplete: {{ message }}</div>
+          {% endfor %}
+        {% endif %}
+        {% if not payload.model_options %}
+          <div class="alert error">Aucun modele Ollama disponible. Ajoutez une configuration Ollama active dans le registre LLM, puis verifiez que le conteneur Ollama est joignable.</div>
+        {% endif %}
+      </section>
+
+      <section class="card">
+        <h2>Nouvelle comparaison</h2>
+        <form method="post" action="{{ url_for('admin_llm_comparator') }}" class="train-form" enctype="multipart/form-data">
+          <div class="train-grid">
+            <label>Mode
+              <select name="mode" id="comparatorMode">
+                <option value="benchmark">Benchmark</option>
+                <option value="custom">Prompt custom</option>
+                <option value="tool_calling">Tool calling</option>
+                <option value="vision">Vision image</option>
+              </select>
+            </label>
+            <label>temperature
+              <input type="number" step="0.1" min="0" max="2" name="temperature" value="{{ payload.defaults.temperature }}">
+            </label>
+            <label>max_tokens
+              <input type="number" min="64" max="8000" name="max_tokens" value="{{ payload.defaults.max_tokens }}">
+            </label>
+            <label>retries
+              <input type="number" min="1" max="5" name="retries" value="{{ payload.defaults.retries }}">
+            </label>
+            <label class="checkbox-row">
+              <input type="checkbox" name="json_mode" value="1">
+              JSON strict
+            </label>
+            <label class="full-span">System instruction
+              <textarea name="system_prompt" rows="4">{{ payload.defaults.system_prompt }}</textarea>
+            </label>
+          </div>
+
+          <h3>Modeles</h3>
+          {% if payload.model_options %}
+            <div class="sequence-plan">
+              {% for option in payload.model_options %}
+                <label class="pipeline-step checkbox-row">
+                  <input type="checkbox" name="selected_model_keys" value="{{ option.value }}" {% if loop.index <= 2 %}checked{% endif %}>
+                  {{ option.label }}
+                  <span class="muted-line">{{ option.profile_type }} / {{ option.api_url }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          {% else %}
+            <p class="empty">Aucune configuration Ollama active.</p>
+          {% endif %}
+
+          <div data-mode-panel="benchmark">
+            <h3>Benchmarks bilingues</h3>
+            <div class="sequence-plan">
+              {% for benchmark in payload.benchmarks %}
+                <label class="pipeline-step checkbox-row">
+                  <input type="checkbox" name="benchmark_ids" value="{{ benchmark.benchmark_id }}" {% if benchmark.benchmark_id in payload.default_benchmark_ids %}checked{% endif %}>
+                  {{ benchmark.category }} / {{ benchmark.language }} / {{ benchmark.difficulty }}
+                  <span class="muted-line">{{ benchmark.focus }}</span>
+                </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <div data-mode-panel="custom" hidden>
+            <h3>Prompt custom</h3>
+            <div class="train-grid">
+              <label class="full-span">User prompt
+                <textarea name="custom_prompt" rows="7">{{ payload.defaults.custom_prompt }}</textarea>
+              </label>
+            </div>
+          </div>
+
+          <div data-mode-panel="tool_calling" hidden>
+            <h3>Tool calling</h3>
+            <div class="train-grid">
+              <label class="full-span">Tool prompt
+                <textarea name="tool_prompt" rows="6">{{ payload.defaults.tool_prompt }}</textarea>
+              </label>
+            </div>
+          </div>
+
+          <div data-mode-panel="vision" hidden>
+            <h3>Vision image</h3>
+            <div class="train-grid">
+              <label>Image optionnelle
+                <input type="file" name="vision_image" accept="image/*">
+              </label>
+              <label class="full-span">Vision prompt
+                <textarea name="vision_prompt" rows="6">{{ payload.defaults.vision_prompt }}</textarea>
+              </label>
+            </div>
+            <p class="muted-line">Sans image, un fixture PNG minimal est utilise. Les PDF ne sont pas supportes dans cette version.</p>
+          </div>
+
+          <div class="agentai-actions">
+            <button type="submit" class="icon-btn icon-run" title="Lancer la comparaison" aria-label="Lancer la comparaison" {% if not payload.model_options %}disabled{% endif %}></button>
+            <span class="muted-line">Les erreurs d'un modele sont conservees sans bloquer les autres resultats.</span>
+          </div>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Derniers runs</h2>
+        {% if payload.recent_runs %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Mode</th>
+                  <th>Status</th>
+                  <th>Resultats</th>
+                  <th>Acteur</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for run in payload.recent_runs %}
+                  <tr>
+                    <td>{{ run.created_at }}</td>
+                    <td>{{ run.mode }}</td>
+                    <td>{{ run.status }}</td>
+                    <td>{{ run.result_count }}</td>
+                    <td>{{ run.actor or '-' }}</td>
+                    <td><a class="ghost-link" href="{{ url_for('admin_llm_comparator_detail', run_id=run.run_id) }}">Ouvrir</a></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="empty">Aucun run Comparator pour le moment.</p>
+        {% endif %}
+      </section>
+    {% endif %}
+  </main>
+
+  <script>
+    (() => {
+      const modeSelect = document.getElementById("comparatorMode");
+      const panels = Array.from(document.querySelectorAll("[data-mode-panel]"));
+      if (!modeSelect) return;
+      function syncMode() {
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.modePanel !== modeSelect.value;
+        });
+      }
+      modeSelect.addEventListener("change", syncMode);
+      syncMode();
+    })();
+  </script>
+</body>
+</html>

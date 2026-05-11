@@ -10,13 +10,14 @@
   {% include "_nav.html" %}
   <main class="page review-page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Workflow qualite</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Revue documents</p>
       <div class="views-nav">
         <a class="ghost-link" href="{{ url_for('admin_document_review') }}">File de revue</a>
         {% if payload %}
-          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard-list</a>
-          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ payload.document.uuid }}">Chunk-list</a>
+          <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=payload.project.slug) }}">Shard</a>
+          <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=payload.project.slug) }}?shard_id={{ payload.document.uuid }}">Chunk</a>
+          <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ payload.project.slug }}&shard={{ payload.document.uuid }}">Shard-To-Chunk</a>
         {% endif %}
       </div>
       <h1>Revue document</h1>

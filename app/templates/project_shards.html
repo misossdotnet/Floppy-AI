@@ -3,22 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vue Shards | Floppy-AI | Datas Warehouse</title>
+  <title>Shard | Floppy-AI</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
   {% include "_nav.html" %}
   <main class="page">
     <section class="hero">
-      <p class="eyebrow">Floppy-AI</p>
-      <p class="brand-tag">Datas Warehouse</p>
+      <p class="eyebrow">Factory</p>
+      <p class="brand-tag">Project corpus</p>
       <div class="views-nav">
-        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Tableau de bord</a>
-        <a class="ghost-link" href="{{ url_for('projects_train') }}">Vue train</a>
+        <a class="ghost-link" href="{{ url_for('admin_dashboard') }}">Project</a>
+        <a class="ghost-link" href="{{ url_for('projects_train') }}">Train</a>
       </div>
-      <h1>Vue shards et chunks</h1>
+      <h1>Shard</h1>
       <p class="lead">
-        Cette vue est dediee aux shards et au chunking des documents.
+        Creation manuelle de shards, revue documentaire et transformation Shard-To-Chunk.
       </p>
     </section>
 
@@ -55,10 +55,31 @@
             Tables: <code>{{ project.shard_table }}</code> / <code>{{ project.chunk_table }}</code> / <code>{{ project.chat_table }}</code>
           </p>
           <p class="muted-line">
-            <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Ouvrir Chat-list</a>
-            <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Ouvrir revue documents</a>
-            <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ project.slug }}">Shard-To-Chunk LLM</a>
+            <a class="ghost-link" href="{{ url_for('project_document_vision', project_slug=project.slug) }}">Document Vision</a>
+            <a class="ghost-link" href="{{ url_for('project_shard_list', project_slug=project.slug) }}">Shard</a>
+            <a class="ghost-link" href="{{ url_for('project_shard_new', project_slug=project.slug) }}">Nouveau shard</a>
+            <a class="ghost-link" href="{{ url_for('admin_document_review') }}?project={{ project.slug }}">Revue documents</a>
+            <a class="ghost-link" href="{{ url_for('projects_shard_quality') }}">Shard Quality</a>
+            <a class="ghost-link" href="{{ url_for('admin_chunking_config') }}?project={{ project.slug }}">Shard-To-Chunk</a>
+            <a class="ghost-link" href="{{ url_for('project_chunk_list', project_slug=project.slug) }}">Chunk</a>
+            <a class="ghost-link" href="{{ url_for('project_train_list', project_slug=project.slug) }}">Train</a>
+            <a class="ghost-link" href="{{ url_for('project_chat_list', project_slug=project.slug) }}">Outside Chat</a>
           </p>
+
+          <form method="post" action="{{ url_for('add_shard_item', project_slug=project.slug) }}" class="train-form">
+            <input type="hidden" name="return_to" value="projects_shards">
+            <h3>Ajouter un shard manuel</h3>
+            <div class="train-grid">
+              <label>source_document<input type="text" name="source_document" placeholder="manual"></label>
+              <label>url_document<input type="text" name="url_document"></label>
+              <label>title_document<input type="text" name="title_document"></label>
+              <label>autor_document<input type="text" name="autor_document"></label>
+              <label class="full-span">content_document
+                <textarea name="content_document" rows="5" required></textarea>
+              </label>
+            </div>
+            <button type="submit" class="icon-btn icon-add" title="Ajouter shard" aria-label="Ajouter shard"></button>
+          </form>
 
           <form method="post" action="{{ url_for('chunkify_project', project_slug=project.slug) }}" class="chunk-form">
             <input type="hidden" name="return_to" value="projects_shards">
@@ -103,6 +124,7 @@
                       <td>
                         <strong>{{ shard.chunk_count }}</strong><br>
                         <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=project.slug, document_id=shard.uuid) }}">Revue</a>
+                        <a class="ghost-link" href="{{ url_for('project_shard_quality', project_slug=project.slug, shard_uuid=shard.uuid) }}">Qualite</a>
                       </td>
                     </tr>
                   {% endfor %}
