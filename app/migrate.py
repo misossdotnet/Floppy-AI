@@ -1,5 +1,6 @@
 """SQL migration runner and migration state tracking."""
 
+import argparse
 import hashlib
 import sys
 from pathlib import Path
@@ -36,6 +37,14 @@ APPLICATION_BOOTSTRAP_TABLES = (
     "document_vision_run",
     "shard_quality_config",
     "shard_quality_run",
+    "auth_token_revocation",
+    "business_audit_event",
+)
+
+LEGACY_BOOTSTRAP_TABLES = tuple(
+    table_name
+    for table_name in APPLICATION_BOOTSTRAP_TABLES
+    if table_name not in {"auth_token_revocation", "business_audit_event"}
 )
 
 
@@ -67,7 +76,7 @@ def list_migration_files():
     return sorted(path for path in MIGRATIONS_DIR.glob("*.sql") if path.is_file())
 
 
-def list_missing_application_tables(cur):
+def list_missing_application_tables(cur, expected_tables=APPLICATION_BOOTSTRAP_TABLES):
     """Return application bootstrap tables not present in public schema."""
     cur.execute(
         """
@@ -76,43 +85,14 @@ def list_missing_application_tables(cur):
         WHERE table_schema = 'public'
           AND table_name = ANY(%s);
         """,
-        (list(APPLICATION_BOOTSTRAP_TABLES),),
+        (list(expected_tables),),
     )
     existing_tables = {row[0] for row in cur.fetchall()}
     return [
         table_name
-        for table_name in APPLICATION_BOOTSTRAP_TABLES
+        for table_name in expected_tables
         if table_name not in existing_tables
     ]
-
-
-def ensure_application_schema(cur):
-    """Create and synchronize global application tables."""
-    from llm_gateway import ensure_llm_tables
-    from llm_comparator import ensure_llm_comparator_tables
-    from quizbot import ensure_quizbot_tables
-    from document_vision import ensure_document_vision_tables
-    from shard_quality import ensure_shard_quality_tables
-    from services import (
-        ensure_business_tables,
-        ensure_pgvector_extension,
-        ensure_projects_table,
-    )
-    from task_sequencer import ensure_task_sequencer_tables
-    from vectorization import ensure_vectorization_tables
-    from webchat import ensure_webchat_tables
-
-    ensure_pgvector_extension(cur)
-    ensure_projects_table(cur)
-    ensure_business_tables(cur)
-    ensure_llm_tables(cur)
-    ensure_llm_comparator_tables(cur)
-    ensure_quizbot_tables(cur)
-    ensure_webchat_tables(cur)
-    ensure_vectorization_tables(cur)
-    ensure_task_sequencer_tables(cur)
-    ensure_document_vision_tables(cur)
-    ensure_shard_quality_tables(cur)
 
 
 def get_pgvector_version(cur):
@@ -147,8 +127,15 @@ def apply_pending_migrations(cur):
         if not sql_payload.strip():
             raise RuntimeError(f"La migration '{migration_id}' est vide.")
 
-        print(f"[migrate] apply {migration_id}")
-        cur.execute(sql_payload)
+        is_legacy_baseline = (
+            migration_id == "0001_bootstrap_schema.sql"
+            and not list_missing_application_tables(cur, LEGACY_BOOTSTRAP_TABLES)
+        )
+        if is_legacy_baseline:
+            print(f"[migrate] baseline {migration_id} (schema existant)")
+        else:
+            print(f"[migrate] apply {migration_id}")
+            cur.execute(sql_payload)
         cur.execute(
             f"""
             INSERT INTO public.{MIGRATIONS_TABLE} (migration_id, checksum)
@@ -161,14 +148,47 @@ def apply_pending_migrations(cur):
     return applied_now
 
 
-def main():
+def check_migration_state(cur):
+    """Fail when a migration is pending, modified, or the schema is incomplete."""
+    applied = get_applied_migrations(cur)
+    migration_files = {path.name: path for path in list_migration_files()}
+    orphaned = sorted(set(applied) - set(migration_files))
+    if orphaned:
+        raise RuntimeError(
+            "Migrations appliquees sans fichier local: " + ", ".join(orphaned)
+        )
+    pending = []
+    for migration_file in migration_files.values():
+        migration_id = migration_file.name
+        checksum = hashlib.sha256(migration_file.read_bytes()).hexdigest()
+        if migration_id not in applied:
+            pending.append(migration_id)
+        elif applied[migration_id] != checksum:
+            raise RuntimeError(f"Checksum mismatch pour la migration '{migration_id}'.")
+    if pending:
+        raise RuntimeError(f"Migrations en attente: {', '.join(pending)}")
+    missing_tables = list_missing_application_tables(cur)
+    if missing_tables:
+        raise RuntimeError(f"Tables applicatives manquantes: {', '.join(missing_tables)}")
+
+
+def main(check_only=False):
     """Run the migration command-line entry point."""
     print(f"[migrate] cible PostgreSQL: {describe_db_target()}")
     with get_db_connection() as conn:
         with conn.cursor() as cur:
+            if check_only:
+                check_migration_state(cur)
+                pgvector_version = get_pgvector_version(cur)
+                print(f"[migrate] schema a jour; pgvector={pgvector_version}")
+                return
             applied_now = apply_pending_migrations(cur)
             missing_bootstrap_tables = list_missing_application_tables(cur)
-            ensure_application_schema(cur)
+            if missing_bootstrap_tables:
+                raise RuntimeError(
+                    "Schema incomplet apres migrations: "
+                    + ", ".join(missing_bootstrap_tables)
+                )
             pgvector_version = get_pgvector_version(cur)
 
     print(f"[migrate] pgvector disponible: {pgvector_version}")
@@ -189,7 +209,14 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        parser = argparse.ArgumentParser()
+        parser.add_argument(
+            "--check",
+            action="store_true",
+            help="Verifie les checksums, migrations en attente et tables attendues.",
+        )
+        args = parser.parse_args()
+        main(check_only=args.check)
     except Exception as exc:
         print(f"[migrate] erreur: {exc}", file=sys.stderr)
         sys.exit(1)

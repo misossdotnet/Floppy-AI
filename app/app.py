@@ -7,6 +7,7 @@ from flask import Flask
 from api_mcp import register_api_mcp_routes
 from api_rest import register_api_rest_routes
 from services import is_debug_enabled, parse_env_bool, resolve_flask_secret_key
+from security import register_security
 from ui import register_ui_routes
 
 
@@ -21,6 +22,7 @@ app.secret_key = resolve_flask_secret_key()
 app.config["APP_ENABLE_UI"] = is_interface_enabled("APP_ENABLE_UI", default=True)
 app.config["APP_ENABLE_API"] = is_interface_enabled("APP_ENABLE_API", default=True)
 app.config["APP_ENABLE_MCP"] = is_interface_enabled("APP_ENABLE_MCP", default=True)
+register_security(app)
 
 if app.config["APP_ENABLE_API"]:
     register_api_rest_routes(app)

@@ -1,6 +1,26 @@
 """REST API route registration for business endpoints."""
 
-from services import *
+from services import (
+    DEFAULT_CHUNK_OPTIONS,
+    DEFAULT_ERROR_MESSAGES,
+    api_error_response,
+    api_internal_error_response,
+    approve_document_by_id,
+    build_dataset_for_project,
+    chunk_project_for_api,
+    get_dataset_build_by_id,
+    get_document_lineage,
+    import_documents_for_project,
+    list_chunks_for_api,
+    merge_payloads,
+    normalize_document_by_id,
+    public_exception_message,
+    read_json_payload,
+    request,
+    require_any_scope,
+    require_scopes,
+    validate_operation_payload,
+)
 
 
 def register_api_rest_routes(app):
@@ -52,6 +72,7 @@ def register_api_rest_routes(app):
             or ""
             ),
             "normalization_version": payload.get("normalization_version"),
+            "normalization_options": payload.get("normalization_options") or {},
         }
 
         try:
@@ -60,6 +81,7 @@ def register_api_rest_routes(app):
                 document_id=parsed_payload["document_id"],
                 project_slug=parsed_payload.get("project_slug", ""),
                 normalization_version=parsed_payload.get("normalization_version", ""),
+                normalization_options=parsed_payload.get("normalization_options", {}),
             )
             return {
                 "ok": True,

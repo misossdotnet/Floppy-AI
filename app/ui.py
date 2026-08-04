@@ -40,7 +40,55 @@ from llm_comparator import (
     get_run_detail as get_llm_comparator_run_detail,
     run_llm_comparison,
 )
-from services import *
+from services import (
+    DEFAULT_ERROR_MESSAGES,
+    NORMALIZATION_STAGES,
+    add_chunk_record,
+    add_document_review_annotation,
+    add_document_section_exclusion,
+    add_shard_record,
+    add_train_record,
+    admin_auth_required_response,
+    api_error_response,
+    api_internal_error_response,
+    approve_document_by_id,
+    auth_failure_response,
+    chunkify_project_shards,
+    create_project,
+    delete_chunk_record,
+    delete_document_review_annotation,
+    delete_document_section_exclusion,
+    delete_project,
+    delete_shard_record,
+    delete_train_record,
+    flash,
+    flash_internal_error,
+    get_document_review_payload,
+    get_project_chat_dashboard_payload,
+    get_project_chat_payload,
+    get_project_crud_payload,
+    is_admin_authenticated,
+    list_document_review_items,
+    list_projects,
+    list_projects_shards,
+    login_admin_user,
+    logout_admin_user,
+    normalize_document_by_id,
+    parse_chunk_options,
+    public_exception_message,
+    redirect,
+    render_template,
+    request,
+    require_scopes,
+    resolve_return_url,
+    safe_next_url,
+    session,
+    ui_internal_error_message,
+    upsert_chat_evaluation,
+    url_for,
+    verify_admin_credentials,
+    vote_train_record,
+)
 from webchat import (
     add_pipeline_step,
     delete_pipeline_step,
@@ -89,6 +137,7 @@ from vectorization import (
     test_vectorization_config,
     vectorize_project_data,
 )
+from security import role_allows, verify_ui_user
 
 
 ADMIN_UI_ENDPOINTS = {
@@ -196,6 +245,8 @@ def register_ui_routes(app):
         return {
             "admin_authenticated": authenticated,
             "admin_username": session.get("admin_username", "") if authenticated else "",
+            "admin_role": session.get("admin_role", "") if authenticated else "",
+            "normalization_stages": NORMALIZATION_STAGES,
         }
 
 
@@ -204,6 +255,14 @@ def register_ui_routes(app):
         """Protect administration UI routes with the browser session."""
         if request.endpoint in ADMIN_UI_ENDPOINTS and not is_admin_authenticated():
             return admin_auth_required_response()
+        if request.endpoint in ADMIN_UI_ENDPOINTS:
+            mutating = request.method in {"POST", "PUT", "PATCH", "DELETE"}
+            required_role = "admin" if any(
+                word in (request.endpoint or "")
+                for word in ("delete", "remove", "config", "save")
+            ) else ("editor" if mutating else "viewer")
+            if not role_allows(session.get("admin_role", "admin"), required_role):
+                return auth_failure_response(403, "Permissions UI insuffisantes.")
         return None
 
 
@@ -262,8 +321,10 @@ def register_ui_routes(app):
             username = (request.form.get("username") or "").strip()
             password = request.form.get("password") or ""
             try:
-                if verify_admin_credentials(username, password):
+                configured_role = verify_ui_user(username, password)
+                if configured_role or verify_admin_credentials(username, password):
                     login_admin_user(username)
+                    session["admin_role"] = configured_role or "admin"
                     return redirect(next_url)
                 flash("Identifiants administration invalides.", "error")
             except Exception as exc:
@@ -1291,7 +1352,16 @@ def register_ui_routes(app):
     def project_document_review_normalize(project_slug, document_id):
         """Normalize a document from the review UI."""
         try:
-            normalize_document_by_id(document_id, project_slug=project_slug)
+            normalize_document_by_id(
+                document_id,
+                project_slug=project_slug,
+                normalization_version=request.form.get("normalization_version", ""),
+                normalization_options={
+                    "enabled_stages": request.form.getlist("enabled_stages"),
+                    "heading_max_level": request.form.get("heading_max_level", 6),
+                    "preserve_code_blocks": bool(request.form.get("preserve_code_blocks")),
+                },
+            )
             flash("Texte normalise mis a jour.", "success")
         except ValueError as exc:
             flash(public_exception_message(exc, DEFAULT_ERROR_MESSAGES["validation_error"]), "error")

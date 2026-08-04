@@ -18,12 +18,14 @@
 
     <section class="card">
       <form method="post" action="{{ url_for('html_to_md_tool') }}" class="tool-grid">
-        <label>HTML source
+        <div>        <label>HTML source
           <textarea name="html_source" rows="18" placeholder="<h1>Titre</h1><p>Contenu...</p>">{{ html_source }}</textarea>
-        </label>
-        <label>Markdown
+        </label></div>
+        <hr/>
+<div><label>Markdown
           <textarea rows="18" readonly>{{ markdown_result }}</textarea>
-        </label>
+        </label></div>
+        <hr/>
         <button type="submit" class="icon-btn icon-run" title="Convertir" aria-label="Convertir"></button>
       </form>
     </section>

@@ -18,7 +18,7 @@ services:
       retries: 5
 
   dataswarehouse-app:
-    image: python:3.12-slim
+    image: python:3.14-slim
     container_name: dataswarehouse-app
     restart: unless-stopped
     working_dir: /app
@@ -29,19 +29,32 @@ services:
       APP_ENABLE_UI: ${APP_ENABLE_UI:-true}
       APP_ENABLE_API: ${APP_ENABLE_API:-true}
       APP_ENABLE_MCP: ${APP_ENABLE_MCP:-true}
-      FLASK_DEBUG: ${FLASK_DEBUG:-true}
-      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:-change-this-secret}
-      FLOPPY_REQUIRE_AUTH: ${FLOPPY_REQUIRE_AUTH:-false}
-      FLOPPY_AUTH_TOKENS: ${FLOPPY_AUTH_TOKENS:-dev-token:admin}
+      FLASK_DEBUG: ${FLASK_DEBUG:-false}
+      FLASK_SECRET_KEY: ${FLASK_SECRET_KEY:?FLASK_SECRET_KEY is required}
+      FLOPPY_REQUIRE_AUTH: ${FLOPPY_REQUIRE_AUTH:-true}
+      FLOPPY_AUTH_TOKENS: ${FLOPPY_AUTH_TOKENS:?FLOPPY_AUTH_TOKENS is required}
+      FLOPPY_API_USERS: ${FLOPPY_API_USERS:-{}}
+      FLOPPY_JWT_SECRET: ${FLOPPY_JWT_SECRET:?FLOPPY_JWT_SECRET is required}
+      FLOPPY_JWT_ACCESS_TTL: ${FLOPPY_JWT_ACCESS_TTL:-900}
+      FLOPPY_JWT_REFRESH_TTL: ${FLOPPY_JWT_REFRESH_TTL:-604800}
       FLOPPY_ADMIN_USERNAME: ${FLOPPY_ADMIN_USERNAME:-admin}
-      FLOPPY_ADMIN_PASSWORD: ${FLOPPY_ADMIN_PASSWORD:-admin}
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 5432
+      FLOPPY_ADMIN_PASSWORD: ${FLOPPY_ADMIN_PASSWORD:?FLOPPY_ADMIN_PASSWORD is required}
+      FLOPPY_UI_USERS: ${FLOPPY_UI_USERS:-{}}
+      FLOPPY_RATE_LIMIT_ENABLED: ${FLOPPY_RATE_LIMIT_ENABLED:-true}
+      FLOPPY_RATE_LIMIT_API: ${FLOPPY_RATE_LIMIT_API:-120}
+      FLOPPY_RATE_LIMIT_MCP: ${FLOPPY_RATE_LIMIT_MCP:-120}
+      FLOPPY_RATE_LIMIT_PUBLIC: ${FLOPPY_RATE_LIMIT_PUBLIC:-30}
+      FLOPPY_TRUST_PROXY_HEADERS: ${FLOPPY_TRUST_PROXY_HEADERS:-false}
+      FLOPPY_CORS_ORIGINS: ${FLOPPY_CORS_ORIGINS:-}
+      ASGI_WSGI_THREADPOOL_WORKERS: ${ASGI_WSGI_THREADPOOL_WORKERS:-8}
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: ${POSTGRES_DB:-dataswarehouse}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_AUTO_CREATE_DB: ${POSTGRES_AUTO_CREATE_DB:-false}
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
-      LLM_API_URL: ${LLM_API_URL:-http://localhost:11434/v1/chat/completions}
+      LLM_API_URL: ${LLM_API_URL:-http://ollama:11434/v1/chat/completions}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-}
       LLM_TIMEOUT: ${LLM_TIMEOUT:-90}
@@ -65,7 +78,7 @@ services:
       UVICORN_TIMEOUT_KEEP_ALIVE: ${UVICORN_TIMEOUT_KEEP_ALIVE:-360}
       UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN: ${UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN:-360}
     depends_on:
-      db:
+      dataswarehouse-db:
         condition: service_healthy
     command: >
       sh -c "pip install --no-cache-dir -r requirements.txt &&
@@ -82,13 +95,29 @@ services:
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-your_api_key}
       OLLAMA_HOST: 0.0.0.0:11434
       OLLAMA_KEEP_ALIVE: -1  # Garder les modèles en mémoire indéfiniment
-      OLLAMA_MODEL: ${N8N_OLLAMA_MODEL:-mistral:7b}      # Nom du modèle : qwen3:4b / qwen3:8b / llama3.1:8b / llama3.2:3b / mistral:7b
+      OLLAMA_MODEL: ${N8N_OLLAMA_MODEL:-mistral:7b} # Nom du modèle : qwen3:4b / qwen3:8b / llama3.1:8b / llama3.2:3b / mistral:7b
     volumes:
-      - ollama_datas:/root/.ollama
+      - ollama_datas_1:/root/.ollama
 #    ports:
 #      - "11434:11434"   # API Ollama
+
+  dataswarehouse-ollama-embedding:
+    image: ollama/ollama:latest
+    container_name: aidataswarehouse-ollama-embedding
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Paris
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-your_api_key}
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_KEEP_ALIVE: -1
+      OLLAMA_MODEL: ${N8N_OLLAMA_MODEL:-qwen3-embedding:0.6b} # Nom du modèle : qwen3-embedding:4b
+    volumes:
+      - ollama_datas_2:/root/.ollama
+#    ports:
+#      - "11435:11434"   # API Ollama
 
 volumes:
   postgres_datas:
   app_datas:
-  ollama_datas: 
+  ollama_datas_1: 
+  ollama_datas_2: 

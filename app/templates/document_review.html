@@ -61,7 +61,22 @@
             <span class="stat-chip"><strong>{{ payload.exclusions|length }}</strong> exclusion(s)</span>
           </div>
         </div>
-        <form method="post" action="{{ url_for('project_document_review_normalize', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="inline-form">
+        <form method="post" action="{{ url_for('project_document_review_normalize', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="review-form">
+          <div class="review-form-grid">
+            <label>Version
+              <input type="text" name="normalization_version" value="{{ payload.processing.normalization_version or 'v2' }}">
+            </label>
+            <label>Niveau maximal des titres
+              <input type="number" name="heading_max_level" min="1" max="6" value="{{ payload.processing.normalization_config.heading_max_level or 6 }}">
+            </label>
+          </div>
+          <div class="review-form-grid">
+            {% set active_stages = payload.processing.normalization_config.enabled_stages or normalization_stages %}
+            {% for stage in normalization_stages %}
+              <label><input type="checkbox" name="enabled_stages" value="{{ stage }}" {% if stage in active_stages %}checked{% endif %}> {{ stage }}</label>
+            {% endfor %}
+            <label><input type="checkbox" name="preserve_code_blocks" value="1" {% if payload.processing.normalization_config.preserve_code_blocks is not sameas false %}checked{% endif %}> Conserver les blocs de code</label>
+          </div>
           <button type="submit" class="ghost-button">Normaliser</button>
         </form>
       </section>
@@ -105,6 +120,8 @@
             <p class="muted-line">Version: <code>{{ payload.processing.normalization_version or '-' }}</code></p>
             <p class="muted-line">Sections: <strong>{{ payload.sections|length }}</strong></p>
             <p class="muted-line">Derniere mise a jour: {{ payload.processing.updated_at or '-' }}</p>
+            <p class="muted-line">Langue: <strong>{{ payload.processing.detected_language or 'und' }}</strong></p>
+            <p class="muted-line">Type: <strong>{{ payload.processing.content_type or 'unknown' }}</strong></p>
           </div>
           <pre class="document-content">{{ payload.processing.normalized_content or '' }}</pre>
         </article>

@@ -4,6 +4,7 @@ import os
 import re
 import unicodedata
 import json
+import html
 import hashlib
 import hmac
 import logging
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from uuid import uuid4
 
-from flask import Flask, flash, redirect, render_template, request, session, url_for
+from flask import Flask, flash, g, redirect, render_template, request, session, url_for
 from psycopg2.extras import Json
 from psycopg2 import sql
 from db import get_db_connection
@@ -24,7 +25,23 @@ DATASET_BUILD_TABLE = "dataset_build"
 DOCUMENT_REGISTRY_TABLE = "document_registry"
 DOCUMENT_REVIEW_ANNOTATION_TABLE = "document_review_annotation"
 DOCUMENT_SECTION_EXCLUSION_TABLE = "document_section_exclusion"
-DEFAULT_NORMALIZATION_VERSION = "v1"
+DEFAULT_NORMALIZATION_VERSION = "v2"
+NORMALIZATION_STAGES = (
+    "line_endings",
+    "html_cleanup",
+    "tables",
+    "code_blocks",
+    "lists",
+    "whitespace",
+    "references",
+    "language",
+    "content_type",
+)
+DEFAULT_NORMALIZATION_OPTIONS = {
+    "enabled_stages": list(NORMALIZATION_STAGES),
+    "heading_max_level": 6,
+    "preserve_code_blocks": True,
+}
 LOCAL_ENV_NAMES = {"local", "dev", "development", "test"}
 APP_ENV = (os.getenv("APP_ENV") or os.getenv("FLASK_ENV") or "development").strip().lower()
 IS_LOCAL_ENV = APP_ENV in LOCAL_ENV_NAMES
@@ -36,6 +53,11 @@ DEFAULT_CHUNK_OPTIONS = {
     "headingMaxLevel": 3,
     "tokenEstimator": "words",
     "charsPerToken": 4,
+    "codeAware": True,
+    "tableAware": True,
+    "mergeSmallParagraphs": True,
+    "smallParagraphMinTokens": 40,
+    "strictZoneTypes": ["code", "table", "strict"],
 }
 
 OPERATION_INPUT_SCHEMAS = {
@@ -52,6 +74,7 @@ OPERATION_INPUT_SCHEMAS = {
             "document_id": {"type": "string", "allow_empty": False},
             "project_slug": {"type": "string", "allow_empty": True, "default": ""},
             "normalization_version": {"type": "string", "allow_empty": True, "default": ""},
+            "normalization_options": {"type": "object", "default": {}},
         },
     },
     "chunk_project": {
@@ -69,6 +92,11 @@ OPERATION_INPUT_SCHEMAS = {
                 "enum": ["words", "chars"],
             },
             "charsPerToken": {"type": "integer", "min": 1},
+            "codeAware": {"type": "boolean", "default": True},
+            "tableAware": {"type": "boolean", "default": True},
+            "mergeSmallParagraphs": {"type": "boolean", "default": True},
+            "smallParagraphMinTokens": {"type": "integer", "min": 1, "default": 40},
+            "strictZoneTypes": {"type": "array", "default": ["code", "table", "strict"]},
         },
     },
     "build_dataset": {
@@ -254,6 +282,7 @@ def login_admin_user(username: str):
     session.clear()
     session["admin_authenticated"] = True
     session["admin_username"] = username
+    session["admin_role"] = "admin"
 
 
 def logout_admin_user():
@@ -341,6 +370,27 @@ def extract_request_token() -> str:
             return header_value
 
     return ""
+
+
+def resolve_token_scopes(token):
+    """Resolve scopes from a signed JWT first, then legacy static tokens."""
+    if token.count(".") == 2:
+        from security import decode_jwt
+        claims = decode_jwt(token, "access")
+        if claims:
+            g.auth_claims = claims
+            return normalize_scopes(claims.get("scopes"))
+        return None
+    scopes = load_auth_tokens().get(token)
+    if scopes:
+        # Static secrets must never appear in logs. A stable fingerprint still
+        # makes their business-audit events attributable and searchable.
+        g.auth_claims = {
+            "sub": f"static:{hashlib.sha256(token.encode('utf-8')).hexdigest()[:12]}",
+            "scopes": sorted(scopes),
+            "type": "static",
+        }
+    return scopes
 
 
 def is_api_or_mcp_request() -> bool:
@@ -460,7 +510,7 @@ def enforce_mcp_tool_acl(tool_name: str):
         return
 
     token = extract_request_token()
-    token_scopes = load_auth_tokens().get(token, set())
+    token_scopes = resolve_token_scopes(token) or set()
     if required_scopes and not is_scope_authorized(token_scopes, required_scopes):
         raise PermissionError(
             f"Permissions insuffisantes pour '{tool_name}'. "
@@ -494,15 +544,14 @@ def require_scopes(*required_scopes):
             if not is_auth_enforced():
                 return func(*args, **kwargs)
 
-            configured_tokens = load_auth_tokens()
             token = extract_request_token()
-            if not token or token not in configured_tokens:
+            granted_scopes = resolve_token_scopes(token) if token else None
+            if not granted_scopes:
                 return auth_failure_response(
                     status_code=401,
                     message=DEFAULT_ERROR_MESSAGES["unauthorized"],
                 )
 
-            granted_scopes = configured_tokens[token]
             if not is_scope_authorized(granted_scopes, required):
                 return auth_failure_response(
                     status_code=403,
@@ -528,15 +577,14 @@ def require_any_scope(*allowed_scopes):
             if not is_auth_enforced():
                 return func(*args, **kwargs)
 
-            configured_tokens = load_auth_tokens()
             token = extract_request_token()
-            if not token or token not in configured_tokens:
+            granted_scopes = resolve_token_scopes(token) if token else None
+            if not granted_scopes:
                 return auth_failure_response(
                     status_code=401,
                     message=DEFAULT_ERROR_MESSAGES["unauthorized"],
                 )
 
-            granted_scopes = configured_tokens[token]
             if not is_any_scope_authorized(granted_scopes, allowed):
                 return auth_failure_response(
                     status_code=403,
@@ -567,7 +615,42 @@ def to_slug(value: str) -> str:
 
 
 def ensure_projects_table(cur):
-    """Ensure projects table."""
+    """Ensure projects table without running DDL on every request."""
+    cur.execute(
+        """
+        SELECT COUNT(*)::int
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = ANY(%s);
+        """,
+        (
+            PROJECTS_TABLE,
+            ["uuid", "project_name", "project_nameslug", "last_date_edit"],
+        ),
+    )
+    if cur.fetchone()[0] == 4:
+        return
+
+    # Legacy installations can still self-repair, but only one transaction may
+    # provision this shared schema at a time.
+    cur.execute("SELECT pg_advisory_xact_lock(61429, 3);")
+    cur.execute(
+        """
+        SELECT COUNT(*)::int
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+          AND column_name = ANY(%s);
+        """,
+        (
+            PROJECTS_TABLE,
+            ["uuid", "project_name", "project_nameslug", "last_date_edit"],
+        ),
+    )
+    if cur.fetchone()[0] == 4:
+        return
+
     cur.execute(
         """
         CREATE TABLE IF NOT EXISTS public.project (
@@ -874,7 +957,31 @@ def ensure_project_tables_exist(cur, project_slug: str, include_chat: bool = Fal
 
 
 def ensure_document_registry_table(cur):
-    """Ensure document registry table."""
+    """Ensure document registry table without DDL on the request hot path."""
+    index_name = f"idx_{DOCUMENT_REGISTRY_TABLE}_project_slug"
+    cur.execute(
+        "SELECT to_regclass(%s), to_regclass(%s);",
+        (
+            f"public.{DOCUMENT_REGISTRY_TABLE}",
+            f"public.{index_name}",
+        ),
+    )
+    table_regclass, index_regclass = cur.fetchone()
+    if table_regclass is not None and index_regclass is not None:
+        return
+
+    cur.execute("SELECT pg_advisory_xact_lock(61429, 2);")
+    cur.execute(
+        "SELECT to_regclass(%s), to_regclass(%s);",
+        (
+            f"public.{DOCUMENT_REGISTRY_TABLE}",
+            f"public.{index_name}",
+        ),
+    )
+    table_regclass, index_regclass = cur.fetchone()
+    if table_regclass is not None and index_regclass is not None:
+        return
+
     cur.execute(
         f"""
         CREATE TABLE IF NOT EXISTS public.{DOCUMENT_REGISTRY_TABLE} (
@@ -887,7 +994,7 @@ def ensure_document_registry_table(cur):
     )
     cur.execute(
         f"""
-        CREATE INDEX IF NOT EXISTS idx_{DOCUMENT_REGISTRY_TABLE}_project_slug
+        CREATE INDEX IF NOT EXISTS {index_name}
         ON public.{DOCUMENT_REGISTRY_TABLE} (project_slug);
         """
     )
@@ -1205,25 +1312,189 @@ def ensure_table_vector_columns(cur, table_name: str):
 
 
 def ensure_project_vector_schema(cur, project_slug: str):
-    """Ensure shard/chunk/train tables can store pgvector embeddings."""
+    """Ensure project embedding columns, keeping DDL off the request hot path."""
     slug = (project_slug or "").strip()
     if not slug:
         return
+
+    table_names = [f"{slug}_shard", f"{slug}_chunk", f"{slug}_train"]
+    vector_columns = [
+        "embedding",
+        "embedding_model",
+        "embedding_config_id",
+        "embedding_dimensions",
+        "embedding_status",
+        "embedding_error",
+        "embedding_updated_at",
+    ]
+
+    def schema_is_ready():
+        cur.execute("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector');")
+        if not cur.fetchone()[0]:
+            return False
+        cur.execute(
+            """
+            SELECT table_name, COUNT(*)::int
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = ANY(%s)
+              AND column_name = ANY(%s)
+            GROUP BY table_name;
+            """,
+            (table_names, vector_columns),
+        )
+        counts = dict(cur.fetchall())
+        return all(counts.get(table_name) == len(vector_columns) for table_name in table_names)
+
+    if schema_is_ready():
+        return
+
+    # The second key scopes legacy repair to one project, so independent
+    # projects can still be provisioned concurrently.
+    cur.execute("SELECT pg_advisory_xact_lock(61429, hashtext(%s));", (slug,))
+    if schema_is_ready():
+        return
     ensure_pgvector_extension(cur)
-    for table_name in (
-        f"{slug}_shard",
-        f"{slug}_chunk",
-        f"{slug}_train",
-    ):
+    for table_name in table_names:
         ensure_table_vector_columns(cur, table_name)
+
+
+def lock_project_corpus_mutation(cur, project_slug: str):
+    """Serialize corpus rewrites for one project within the transaction."""
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(61430, hashtext(%s));",
+        ((project_slug or "").strip(),),
+    )
+
+
+BUSINESS_SCHEMA_COLUMNS = {
+    DOCUMENT_REGISTRY_TABLE: {
+        "document_id",
+        "project_slug",
+        "updated_at",
+        "created_at",
+    },
+    DOCUMENT_PROCESSING_TABLE: {
+        "document_id",
+        "project_slug",
+        "normalization_version",
+        "raw_content",
+        "normalized_content",
+        "rendered_text",
+        "structured_content",
+        "normalization_config",
+        "detected_language",
+        "content_type",
+        "extracted_metadata",
+        "approval_status",
+        "quality_score",
+    },
+    CHUNK_METADATA_TABLE: {
+        "chunk_id",
+        "project_slug",
+        "shard_id",
+        "document_id",
+        "section_title",
+        "section_path",
+        "previous_document_id",
+        "previous_chunk_id",
+        "next_chunk_id",
+        "summary_short",
+        "document_position_ratio",
+        "chunk_type",
+        "chunking_method",
+        "zone_type",
+        "strict_zone",
+        "metadata",
+        "quality_score",
+    },
+    DATASET_BUILD_TABLE: {
+        "build_id",
+        "project_slug",
+        "status",
+        "quality_min",
+        "options",
+        "stats",
+        "items_preview",
+    },
+    DOCUMENT_REVIEW_ANNOTATION_TABLE: {
+        "annotation_id",
+        "document_id",
+        "project_slug",
+        "target_type",
+        "status",
+        "note",
+    },
+    DOCUMENT_SECTION_EXCLUSION_TABLE: {
+        "exclusion_id",
+        "document_id",
+        "project_slug",
+        "section_path",
+    },
+}
+BUSINESS_SCHEMA_INDEXES = {
+    f"idx_{DOCUMENT_REGISTRY_TABLE}_project_slug",
+    f"idx_{DOCUMENT_PROCESSING_TABLE}_project_slug",
+    f"idx_{DOCUMENT_PROCESSING_TABLE}_approval_status",
+    f"idx_{DOCUMENT_PROCESSING_TABLE}_quality_score",
+    f"idx_{CHUNK_METADATA_TABLE}_project_shard",
+    f"idx_{CHUNK_METADATA_TABLE}_shard_id",
+    f"idx_{CHUNK_METADATA_TABLE}_quality_score",
+    f"idx_{DATASET_BUILD_TABLE}_project",
+    f"idx_{DOCUMENT_REVIEW_ANNOTATION_TABLE}_document",
+    f"idx_{DOCUMENT_SECTION_EXCLUSION_TABLE}_document",
+}
+
+
+def business_schema_is_ready(cur):
+    """Return whether the migrated shared schema can serve hot-path requests."""
+    table_names = list(BUSINESS_SCHEMA_COLUMNS)
+    cur.execute(
+        """
+        SELECT table_name, column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = ANY(%s);
+        """,
+        (table_names,),
+    )
+    observed_columns = {table_name: set() for table_name in table_names}
+    for table_name, column_name in cur.fetchall():
+        observed_columns.setdefault(table_name, set()).add(column_name)
+    if any(
+        not required_columns.issubset(observed_columns.get(table_name, set()))
+        for table_name, required_columns in BUSINESS_SCHEMA_COLUMNS.items()
+    ):
+        return False
+
+    cur.execute(
+        """
+        SELECT indexname
+        FROM pg_indexes
+        WHERE schemaname = 'public'
+          AND indexname = ANY(%s);
+        """,
+        (list(BUSINESS_SCHEMA_INDEXES),),
+    )
+    return BUSINESS_SCHEMA_INDEXES.issubset({row[0] for row in cur.fetchall()})
 
 
 def ensure_business_tables(cur):
     """Ensure shared business tables exist with required indexes/constraints.
 
     This covers cross-project tables such as `document_registry`,
-    `document_processing`, `chunk_metadata`, and `dataset_build`.
+    `document_processing`, `chunk_metadata`, and `dataset_build`. Migrated
+    databases take a read-only fast path. Legacy repair DDL is serialized with
+    a transaction-scoped PostgreSQL advisory lock to avoid concurrent ALTER
+    TABLE deadlocks.
     """
+    if business_schema_is_ready(cur):
+        return
+
+    cur.execute("SELECT pg_advisory_xact_lock(61429, 1);")
+    if business_schema_is_ready(cur):
+        return
+
     ensure_document_registry_table(cur)
     cur.execute(
         f"""
@@ -1231,9 +1502,14 @@ def ensure_business_tables(cur):
             document_id text PRIMARY KEY,
             project_slug text NOT NULL,
             normalization_version text NOT NULL DEFAULT '{DEFAULT_NORMALIZATION_VERSION}',
+            raw_content text,
             normalized_content text,
             rendered_text text,
             structured_content jsonb,
+            normalization_config jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+            detected_language text NOT NULL DEFAULT 'und',
+            content_type text NOT NULL DEFAULT 'unknown',
+            extracted_metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb,
             approval_status text NOT NULL DEFAULT 'pending' CHECK (approval_status IN ('pending', 'approved', 'rejected')),
             approval_comment text,
             approved_by text,
@@ -1243,6 +1519,21 @@ def ensure_business_tables(cur):
             updated_at timestamptz NOT NULL DEFAULT now()
         );
         """
+    )
+    cur.execute(
+        f"ALTER TABLE public.{DOCUMENT_PROCESSING_TABLE} ADD COLUMN IF NOT EXISTS raw_content text;"
+    )
+    cur.execute(
+        f"ALTER TABLE public.{DOCUMENT_PROCESSING_TABLE} ADD COLUMN IF NOT EXISTS normalization_config jsonb NOT NULL DEFAULT '{{}}'::jsonb;"
+    )
+    cur.execute(
+        f"ALTER TABLE public.{DOCUMENT_PROCESSING_TABLE} ADD COLUMN IF NOT EXISTS detected_language text NOT NULL DEFAULT 'und';"
+    )
+    cur.execute(
+        f"ALTER TABLE public.{DOCUMENT_PROCESSING_TABLE} ADD COLUMN IF NOT EXISTS content_type text NOT NULL DEFAULT 'unknown';"
+    )
+    cur.execute(
+        f"ALTER TABLE public.{DOCUMENT_PROCESSING_TABLE} ADD COLUMN IF NOT EXISTS extracted_metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;"
     )
     cur.execute(
         f"""
@@ -1256,6 +1547,10 @@ def ensure_business_tables(cur):
             previous_document_id text,
             previous_chunk_id text,
             next_chunk_id text,
+            summary_short text NOT NULL DEFAULT '',
+            document_position_ratio numeric(6,5) NOT NULL DEFAULT 0,
+            zone_type text NOT NULL DEFAULT 'text',
+            strict_zone boolean NOT NULL DEFAULT false,
             quality_score numeric(5,4),
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
@@ -1268,6 +1563,10 @@ def ensure_business_tables(cur):
     cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS llm_profile_type text;")
     cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS llm_audit_session_id text;")
     cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{{}}'::jsonb;")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS summary_short text NOT NULL DEFAULT '';")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS document_position_ratio numeric(6,5) NOT NULL DEFAULT 0;")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS zone_type text NOT NULL DEFAULT 'text';")
+    cur.execute(f"ALTER TABLE public.{CHUNK_METADATA_TABLE} ADD COLUMN IF NOT EXISTS strict_zone boolean NOT NULL DEFAULT false;")
     cur.execute(
         f"""
         CREATE TABLE IF NOT EXISTS public.{DATASET_BUILD_TABLE} (
@@ -1380,15 +1679,283 @@ def now_utc():
 
 
 def normalize_document_content(content: str) -> str:
-    """Normalize document content."""
-    normalized = (content or "").replace("\r\n", "\n").replace("\r", "\n")
-    normalized = re.sub(r"<\s*br\s*/?\s*>", "\n", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"</\s*p\s*>", "\n\n", normalized, flags=re.IGNORECASE)
-    normalized = re.sub(r"<[^>]+>", " ", normalized)
-    normalized = re.sub(r"[ \t]+", " ", normalized)
-    normalized = re.sub(r"[ \t]+\n", "\n", normalized)
-    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
-    return normalized.strip()
+    """Normalize document content with the default advanced pipeline."""
+    return run_normalization_pipeline(content)["normalized_content"]
+
+
+def normalize_normalization_options(raw_options=None):
+    """Validate normalization stages and return a stable pipeline configuration."""
+    options = DEFAULT_NORMALIZATION_OPTIONS.copy()
+    options["enabled_stages"] = list(NORMALIZATION_STAGES)
+    if not isinstance(raw_options, dict):
+        return options
+
+    requested_stages = raw_options.get("enabled_stages")
+    if isinstance(requested_stages, str):
+        requested_stages = requested_stages.split(",")
+    if isinstance(requested_stages, (list, tuple, set)):
+        normalized_stages = []
+        for stage in requested_stages:
+            stage_name = str(stage).strip().lower()
+            if stage_name and stage_name not in NORMALIZATION_STAGES:
+                raise ValueError(f"Etape de normalisation inconnue: '{stage_name}'.")
+            if stage_name and stage_name not in normalized_stages:
+                normalized_stages.append(stage_name)
+        options["enabled_stages"] = normalized_stages
+
+    try:
+        heading_max_level = int(raw_options.get("heading_max_level", 6))
+    except (TypeError, ValueError):
+        raise ValueError("'heading_max_level' doit etre un entier.") from None
+    options["heading_max_level"] = min(6, max(1, heading_max_level))
+    options["preserve_code_blocks"] = parse_bool_field(
+        raw_options.get("preserve_code_blocks"),
+        default=True,
+    )
+    return options
+
+
+def extract_code_blocks(text):
+    """Extract fenced code blocks and replace them with stable placeholders."""
+    code_blocks = []
+
+    def replace(match):
+        language = (match.group(1) or "").strip().lower()
+        content = (match.group(2) or "").strip("\n")
+        index = len(code_blocks)
+        code_blocks.append(
+            {
+                "index": index,
+                "language": language,
+                "content": content,
+                "line_count": len(content.splitlines()) if content else 0,
+            }
+        )
+        return f"\n@@FLOPPY_CODE_BLOCK_{index}@@\n"
+
+    protected = re.sub(r"```([A-Za-z0-9_+.-]*)[ \t]*\n(.*?)```", replace, text, flags=re.DOTALL)
+    return protected, code_blocks
+
+
+def restore_code_blocks(text, code_blocks):
+    """Restore protected fenced code blocks after textual cleanup."""
+    restored = text
+    for block in code_blocks:
+        language = block["language"]
+        fence_header = f"```{language}" if language else "```"
+        fenced = f"{fence_header}\n{block['content']}\n```"
+        restored = restored.replace(f"@@FLOPPY_CODE_BLOCK_{block['index']}@@", fenced)
+    return restored
+
+
+def split_markdown_table_row(line):
+    """Split a Markdown table row while preserving escaped pipes."""
+    value = line.strip().strip("|")
+    return [cell.replace("\\|", "|").strip() for cell in re.split(r"(?<!\\)\|", value)]
+
+
+def extract_markdown_tables(text):
+    """Extract valid GitHub-style Markdown tables."""
+    lines = text.splitlines()
+    tables = []
+    index = 0
+    while index + 1 < len(lines):
+        header = lines[index]
+        separator = lines[index + 1]
+        if "|" not in header or not re.match(
+            r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$",
+            separator,
+        ):
+            index += 1
+            continue
+        headers = split_markdown_table_row(header)
+        alignments = []
+        for cell in split_markdown_table_row(separator):
+            stripped = cell.strip()
+            alignments.append(
+                "center" if stripped.startswith(":") and stripped.endswith(":")
+                else "right" if stripped.endswith(":")
+                else "left"
+            )
+        rows = []
+        cursor = index + 2
+        while cursor < len(lines) and "|" in lines[cursor] and lines[cursor].strip():
+            row = split_markdown_table_row(lines[cursor])
+            row += [""] * max(0, len(headers) - len(row))
+            rows.append(row[:len(headers)])
+            cursor += 1
+        tables.append(
+            {
+                "index": len(tables),
+                "headers": headers,
+                "alignments": alignments[:len(headers)],
+                "rows": rows,
+                "row_count": len(rows),
+                "column_count": len(headers),
+            }
+        )
+        index = cursor
+    return tables
+
+
+def extract_markdown_lists(text):
+    """Extract ordered, unordered and task-list items with nesting metadata."""
+    items = []
+    pattern = re.compile(r"^(\s*)([-+*]|\d+[.)])\s+(\[[ xX]\]\s+)?(.+)$")
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        match = pattern.match(line)
+        if not match:
+            continue
+        marker = match.group(2)
+        task_marker = (match.group(3) or "").strip().lower()
+        items.append(
+            {
+                "line": line_number,
+                "level": (len(match.group(1).replace("\t", "    ")) // 2) + 1,
+                "kind": "ordered" if marker[0].isdigit() else "unordered",
+                "text": match.group(4).strip(),
+                "checked": None if not task_marker else task_marker == "[x]",
+            }
+        )
+    return items
+
+
+def extract_markdown_references(text):
+    """Extract links, images and footnotes without fetching external resources."""
+    images = [
+        {"alt": alt.strip(), "url": url.strip()}
+        for alt, url in re.findall(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+['\"][^'\"]*['\"])?\)", text)
+    ]
+    text_without_images = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", text)
+    links = [
+        {"label": label.strip(), "url": url.strip()}
+        for label, url in re.findall(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+['\"][^'\"]*['\"])?\)", text_without_images)
+    ]
+    footnote_definitions = {
+        key: value.strip()
+        for key, value in re.findall(r"(?m)^\[\^([^\]]+)\]:\s*(.+)$", text)
+    }
+    footnote_refs = sorted(set(re.findall(r"\[\^([^\]]+)\]", text)))
+    return {
+        "links": links,
+        "images": images,
+        "notes": [
+            {"id": note_id, "content": footnote_definitions.get(note_id, "")}
+            for note_id in footnote_refs
+        ],
+    }
+
+
+def detect_document_language(text):
+    """Detect a likely language using deterministic stop-word evidence."""
+    words = re.findall(r"[A-Za-zÀ-ÿ']+", (text or "").lower())
+    if not words:
+        return {"language": "und", "confidence": 0.0, "scores": {}}
+    stop_words = {
+        "fr": {"le", "la", "les", "des", "une", "un", "et", "est", "dans", "pour", "avec", "que", "qui", "sur", "du"},
+        "en": {"the", "a", "an", "and", "is", "in", "for", "with", "that", "this", "of", "to", "on", "are"},
+        "es": {"el", "la", "los", "las", "una", "un", "y", "es", "en", "para", "con", "que", "de", "por"},
+        "de": {"der", "die", "das", "ein", "eine", "und", "ist", "in", "für", "mit", "dass", "von", "zu", "auf"},
+    }
+    scores = {language: sum(1 for word in words if word in markers) for language, markers in stop_words.items()}
+    language, score = max(scores.items(), key=lambda item: item[1])
+    evidence = sum(scores.values())
+    if score < 2:
+        language = "und"
+    confidence = round(score / max(1, evidence), 4) if language != "und" else 0.0
+    return {"language": language, "confidence": confidence, "scores": scores}
+
+
+def detect_document_content_type(raw_text, code_blocks, tables, list_items):
+    """Classify the dominant document structure."""
+    signals = {
+        "code": len(code_blocks),
+        "table": len(tables),
+        "list": len(list_items),
+        "markdown": len(re.findall(r"(?m)^#{1,6}\s+", raw_text or "")),
+        "html": len(re.findall(r"<[A-Za-z][^>]*>", raw_text or "")),
+    }
+    active = [name for name, count in signals.items() if count]
+    if len(active) > 1:
+        content_type = "mixed"
+    elif active:
+        content_type = active[0]
+    else:
+        content_type = "plain_text"
+    return {"content_type": content_type, "signals": signals}
+
+
+def build_rendered_text(normalized_content):
+    """Build a readable LLM-facing representation without Markdown decoration."""
+    rendered = re.sub(r"(?m)^#{1,6}\s+", "", normalized_content or "")
+    rendered = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", rendered)
+    rendered = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", rendered)
+    rendered = re.sub(r"(?m)^\[\^[^\]]+\]:\s*", "Note: ", rendered)
+    return rendered.strip()
+
+
+def run_normalization_pipeline(raw_content, raw_options=None):
+    """Execute the configurable v2 normalization pipeline."""
+    options = normalize_normalization_options(raw_options)
+    enabled = set(options["enabled_stages"])
+    text = raw_content or ""
+    if "line_endings" in enabled:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+    protected_text, code_blocks = extract_code_blocks(text)
+    if "html_cleanup" in enabled:
+        protected_text = re.sub(r"<\s*br\s*/?\s*>", "\n", protected_text, flags=re.IGNORECASE)
+        protected_text = re.sub(r"</\s*(p|div|section|article|li)\s*>", "\n", protected_text, flags=re.IGNORECASE)
+        protected_text = re.sub(r"<[^>]+>", " ", protected_text)
+        protected_text = html.unescape(protected_text)
+    if "whitespace" in enabled:
+        protected_text = re.sub(r"[ \t]+", " ", protected_text)
+        protected_text = re.sub(r"[ \t]+\n", "\n", protected_text)
+        protected_text = re.sub(r"\n{3,}", "\n\n", protected_text)
+
+    if options["preserve_code_blocks"]:
+        normalized_content = restore_code_blocks(protected_text.strip(), code_blocks)
+    else:
+        normalized_content = protected_text.strip()
+        for block in code_blocks:
+            normalized_content = normalized_content.replace(
+                f"@@FLOPPY_CODE_BLOCK_{block['index']}@@",
+                block["content"],
+            )
+    tables = extract_markdown_tables(normalized_content) if "tables" in enabled else []
+    list_items = extract_markdown_lists(normalized_content) if "lists" in enabled else []
+    references = (
+        extract_markdown_references(normalized_content)
+        if "references" in enabled
+        else {"links": [], "images": [], "notes": []}
+    )
+    language = (
+        detect_document_language(normalized_content)
+        if "language" in enabled
+        else {"language": "und", "confidence": 0.0, "scores": {}}
+    )
+    content_type = (
+        detect_document_content_type(raw_content or "", code_blocks, tables, list_items)
+        if "content_type" in enabled
+        else {"content_type": "unknown", "signals": {}}
+    )
+    extracted_metadata = {
+        "tables": tables,
+        "code_blocks": code_blocks if "code_blocks" in enabled else [],
+        "lists": list_items,
+        **references,
+        "language_detection": language,
+        "content_type_detection": content_type,
+    }
+    return {
+        "raw_content": raw_content or "",
+        "normalized_content": normalized_content,
+        "rendered_text": build_rendered_text(normalized_content),
+        "normalization_config": options,
+        "detected_language": language["language"],
+        "content_type": content_type["content_type"],
+        "extracted_metadata": extracted_metadata,
+    }
 
 
 def compute_quality_score(text: str) -> float:
@@ -1423,8 +1990,12 @@ def compute_quality_score(text: str) -> float:
     return round(max(0.0, min(1.0, score)), 4)
 
 
-def build_structured_content(normalized_content: str, heading_max_level: int = 3):
-    """Build structured content."""
+def build_structured_content(
+    normalized_content: str,
+    heading_max_level: int = 3,
+    extracted_metadata=None,
+):
+    """Build a hierarchical representation enriched with typed elements."""
     sections = split_markdown_sections(normalized_content, heading_max_level)
     if not sections and normalized_content.strip():
         sections = [
@@ -1450,6 +2021,14 @@ def build_structured_content(normalized_content: str, heading_max_level: int = 3
     return {
         "section_count": len(normalized_sections),
         "sections": normalized_sections,
+        "elements": extracted_metadata or {
+            "tables": [],
+            "code_blocks": [],
+            "lists": [],
+            "links": [],
+            "images": [],
+            "notes": [],
+        },
     }
 
 
@@ -1465,6 +2044,7 @@ def parse_chunk_options(payload):
         "hardMaxTokens",
         "headingMaxLevel",
         "charsPerToken",
+        "smallParagraphMinTokens",
     ]
     for field in int_fields:
         if field in payload and str(payload[field]).strip():
@@ -1472,6 +2052,24 @@ def parse_chunk_options(payload):
 
     if "tokenEstimator" in payload and str(payload["tokenEstimator"]).strip():
         options["tokenEstimator"] = str(payload["tokenEstimator"]).strip().lower()
+    for field in ("codeAware", "tableAware", "mergeSmallParagraphs"):
+        if field in payload:
+            options[field] = parse_bool_field(payload[field], default=options[field])
+    if "strictZoneTypes" in payload:
+        raw_zone_types = payload["strictZoneTypes"]
+        if isinstance(raw_zone_types, str):
+            raw_zone_types = raw_zone_types.split(",")
+        if not isinstance(raw_zone_types, (list, tuple, set)):
+            raise ValueError("'strictZoneTypes' doit etre une liste.")
+        allowed_zone_types = {"code", "table", "strict"}
+        zone_types = []
+        for raw_zone_type in raw_zone_types:
+            zone_type = str(raw_zone_type).strip().lower()
+            if zone_type not in allowed_zone_types:
+                raise ValueError(f"Type de zone stricte inconnu: '{zone_type}'.")
+            if zone_type not in zone_types:
+                zone_types.append(zone_type)
+        options["strictZoneTypes"] = zone_types
 
     options["chunkMaxTokens"] = max(1, options["chunkMaxTokens"])
     options["hardMaxTokens"] = max(options["chunkMaxTokens"], options["hardMaxTokens"])
@@ -1480,6 +2078,10 @@ def parse_chunk_options(payload):
         options["chunkOverlapTokens"] = max(0, options["chunkMaxTokens"] - 1)
     options["headingMaxLevel"] = min(6, max(1, options["headingMaxLevel"]))
     options["charsPerToken"] = max(1, options["charsPerToken"])
+    options["smallParagraphMinTokens"] = min(
+        options["chunkMaxTokens"],
+        max(1, options["smallParagraphMinTokens"]),
+    )
     if options["tokenEstimator"] not in {"words", "chars"}:
         options["tokenEstimator"] = "words"
 
@@ -2532,6 +3134,23 @@ def add_chunk_record(project_slug: str, payload):
                 raise ValueError(f"Shard '{shard_id}' introuvable pour ce projet.")
             cur.execute(
                 sql.SQL(
+                    f"""
+                    SELECT c.uuid
+                    FROM {{}} AS c
+                    LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
+                      ON m.chunk_id = c.uuid
+                     AND m.project_slug = %s
+                    WHERE c.shard_id = %s
+                    ORDER BY m.document_position_ratio NULLS LAST,
+                             c.last_date_edit,
+                             c.uuid;
+                    """
+                ).format(sql.Identifier("public", chunk_table)),
+                (project_slug, shard_id),
+            )
+            existing_chunk_ids = [row[0] for row in cur.fetchall()]
+            cur.execute(
+                sql.SQL(
                     """
                     INSERT INTO {} (
                         uuid,
@@ -2566,9 +3185,15 @@ def add_chunk_record(project_slug: str, payload):
                     previous_document_id,
                     previous_chunk_id,
                     next_chunk_id,
+                    summary_short,
+                    document_position_ratio,
+                    chunk_type,
+                    zone_type,
+                    strict_zone,
+                    metadata,
                     quality_score,
                     updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, NULL, %s, now())
+                ) VALUES (%s, %s, %s, %s, %s, %s, NULL, NULL, NULL, %s, 0, 'markdown', 'text', false, %s, %s, now())
                 ON CONFLICT (chunk_id)
                 DO UPDATE SET
                     project_slug = EXCLUDED.project_slug,
@@ -2576,6 +3201,12 @@ def add_chunk_record(project_slug: str, payload):
                     document_id = EXCLUDED.document_id,
                     section_title = EXCLUDED.section_title,
                     section_path = EXCLUDED.section_path,
+                    summary_short = EXCLUDED.summary_short,
+                    document_position_ratio = EXCLUDED.document_position_ratio,
+                    chunk_type = EXCLUDED.chunk_type,
+                    zone_type = EXCLUDED.zone_type,
+                    strict_zone = EXCLUDED.strict_zone,
+                    metadata = EXCLUDED.metadata,
                     quality_score = EXCLUDED.quality_score,
                     updated_at = now();
                 """,
@@ -2586,8 +3217,15 @@ def add_chunk_record(project_slug: str, payload):
                     shard_id,
                     title_document or "Manual",
                     title_document or "Manual",
+                    build_summary_short(content_document),
+                    Json({"source": "manual"}),
                     compute_quality_score(content_document),
                 ),
+            )
+            update_persisted_chunk_lineage(
+                cur,
+                project_slug,
+                [*existing_chunk_ids, chunk_uuid],
             )
     return chunk_uuid
 
@@ -2598,6 +3236,15 @@ def delete_chunk_record(project_slug: str, chunk_uuid: str):
         with conn.cursor() as cur:
             _ = find_project_by_slug(cur, project_slug)
             ensure_business_tables(cur)
+            chunk_table = f"{project_slug}_chunk"
+            cur.execute(
+                sql.SQL("SELECT shard_id FROM {} WHERE uuid = %s;").format(
+                    sql.Identifier("public", chunk_table)
+                ),
+                (chunk_uuid,),
+            )
+            chunk_row = cur.fetchone()
+            shard_id = chunk_row[0] if chunk_row else None
             cur.execute(
                 f"DELETE FROM public.{CHUNK_METADATA_TABLE} WHERE project_slug = %s AND chunk_id = %s;",
                 (project_slug, chunk_uuid),
@@ -2611,13 +3258,34 @@ def delete_chunk_record(project_slug: str, chunk_uuid: str):
                 """,
                 (project_slug, chunk_uuid),
             )
-            chunk_table = f"{project_slug}_chunk"
             cur.execute(
                 sql.SQL("DELETE FROM {} WHERE uuid = %s;").format(
                     sql.Identifier("public", chunk_table)
                 ),
                 (chunk_uuid,),
             )
+            if shard_id:
+                cur.execute(
+                    sql.SQL(
+                        f"""
+                        SELECT c.uuid
+                        FROM {{}} AS c
+                        LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
+                          ON m.chunk_id = c.uuid
+                         AND m.project_slug = %s
+                        WHERE c.shard_id = %s
+                        ORDER BY m.document_position_ratio NULLS LAST,
+                                 c.last_date_edit,
+                                 c.uuid;
+                        """
+                    ).format(sql.Identifier("public", chunk_table)),
+                    (project_slug, shard_id),
+                )
+                update_persisted_chunk_lineage(
+                    cur,
+                    project_slug,
+                    [row[0] for row in cur.fetchall()],
+                )
 
 
 def delete_train_record(project_slug: str, train_uuid: str):
@@ -2721,7 +3389,7 @@ def estimate_tokens(text: str, options) -> int:
 
 def split_by_token_window(text: str, max_tokens: int, overlap_tokens: int, options):
     """Split by token window."""
-    if not text.strip():
+    if max_tokens <= 0 or not text.strip():
         return []
 
     if options["tokenEstimator"] == "chars":
@@ -2762,6 +3430,265 @@ def split_by_token_window(text: str, max_tokens: int, overlap_tokens: int, optio
     return chunks
 
 
+def extract_chunk_zones(section_content):
+    """Split a section into normal, code, table and explicitly strict zones."""
+    lines = (section_content or "").splitlines()
+    zones = []
+    normal_lines = []
+    index = 0
+
+    def flush_normal():
+        text = "\n".join(normal_lines).strip()
+        if text:
+            zones.append({"zone_type": "text", "content": text, "strict": False})
+        normal_lines.clear()
+
+    while index < len(lines):
+        line = lines[index]
+        strict_match = re.match(
+            r"^\s*<!--\s*chunk:strict:start(?:\s+([^>]+?))?\s*-->\s*$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if strict_match:
+            flush_normal()
+            strict_lines = []
+            index += 1
+            while index < len(lines) and not re.match(
+                r"^\s*<!--\s*chunk:strict:end\s*-->\s*$",
+                lines[index],
+                flags=re.IGNORECASE,
+            ):
+                strict_lines.append(lines[index])
+                index += 1
+            if index >= len(lines):
+                raise ValueError("Zone stricte non fermee: marqueur 'chunk:strict:end' manquant.")
+            strict_content = "\n".join(strict_lines).strip()
+            if strict_content:
+                zones.append(
+                    {
+                        "zone_type": "strict",
+                        "content": strict_content,
+                        "strict": True,
+                        "label": (strict_match.group(1) or "").strip(),
+                    }
+                )
+            index += 1
+            continue
+
+        fence_match = re.match(r"^\s*(```+|~~~+)(.*)$", line)
+        if fence_match:
+            flush_normal()
+            fence = fence_match.group(1)
+            closing_pattern = rf"^\s*{re.escape(fence[0])}{{{len(fence)},}}\s*$"
+            code_lines = [line]
+            closed = False
+            index += 1
+            while index < len(lines):
+                code_lines.append(lines[index])
+                if re.match(closing_pattern, lines[index]):
+                    closed = True
+                    break
+                index += 1
+            if not closed:
+                raise ValueError("Bloc de code non ferme.")
+            zones.append(
+                {
+                    "zone_type": "code",
+                    "content": "\n".join(code_lines).strip(),
+                    "strict": True,
+                }
+            )
+            index += 1
+            continue
+
+        if (
+            index + 1 < len(lines)
+            and "|" in line
+            and re.match(
+                r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$",
+                lines[index + 1],
+            )
+        ):
+            flush_normal()
+            table_lines = [line, lines[index + 1]]
+            index += 2
+            while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                table_lines.append(lines[index])
+                index += 1
+            zones.append(
+                {
+                    "zone_type": "table",
+                    "content": "\n".join(table_lines).strip(),
+                    "strict": True,
+                }
+            )
+            continue
+
+        normal_lines.append(line)
+        index += 1
+
+    flush_normal()
+    return zones
+
+
+def merge_small_paragraphs(paragraphs, options):
+    """Merge undersized paragraphs with adjacent prose before chunk packing."""
+    if not options.get("mergeSmallParagraphs", True):
+        return paragraphs
+    minimum = options.get("smallParagraphMinTokens", 40)
+    merged = []
+    pending = ""
+    for paragraph in paragraphs:
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if pending:
+            candidate = f"{pending}\n\n{paragraph}"
+            if estimate_tokens(candidate, options) <= options["chunkMaxTokens"]:
+                pending = candidate
+                if estimate_tokens(pending, options) >= minimum:
+                    merged.append(pending)
+                    pending = ""
+                continue
+            merged.append(pending)
+            pending = ""
+        if estimate_tokens(paragraph, options) < minimum:
+            if merged:
+                candidate = f"{merged[-1]}\n\n{paragraph}"
+                if estimate_tokens(candidate, options) <= options["chunkMaxTokens"]:
+                    merged[-1] = candidate
+                    continue
+            pending = paragraph
+        else:
+            merged.append(paragraph)
+    if pending:
+        if merged:
+            candidate = f"{merged[-1]}\n\n{pending}"
+            if estimate_tokens(candidate, options) <= options["chunkMaxTokens"]:
+                merged[-1] = candidate
+            else:
+                merged.append(pending)
+        else:
+            merged.append(pending)
+    return merged
+
+
+def split_code_zone(code_content, options):
+    """Split oversized fenced code only at line boundaries and keep valid fences."""
+    target_limit = min(options["chunkMaxTokens"], options["hardMaxTokens"])
+    if estimate_tokens(code_content, options) <= target_limit:
+        return [code_content]
+    lines = code_content.splitlines()
+    opener = lines[0]
+    closer = lines[-1]
+    body_lines = lines[1:-1]
+    fence_cost = estimate_tokens(f"{opener}\n{closer}", options)
+    if fence_cost > options["hardMaxTokens"]:
+        raise ValueError("Les marqueurs du bloc de code depassent hardMaxTokens.")
+    chunks = []
+    current = []
+    for line in body_lines:
+        candidate = "\n".join([opener, *current, line, closer])
+        if current and estimate_tokens(candidate, options) > target_limit:
+            chunks.append("\n".join([opener, *current, closer]))
+            current = []
+        single = "\n".join([opener, line, closer])
+        if estimate_tokens(single, options) > options["hardMaxTokens"]:
+            raise ValueError("Une ligne de code depasse hardMaxTokens.")
+        current.append(line)
+    if current:
+        chunks.append("\n".join([opener, *current, closer]))
+    if not chunks:
+        chunks = [f"{opener}\n{closer}"]
+    if any(estimate_tokens(chunk, options) > options["hardMaxTokens"] for chunk in chunks):
+        raise ValueError("Un bloc de code genere depasse hardMaxTokens.")
+    return chunks
+
+
+def split_table_zone(table_content, options):
+    """Split oversized Markdown tables by rows while repeating the header."""
+    target_limit = min(options["chunkMaxTokens"], options["hardMaxTokens"])
+    if estimate_tokens(table_content, options) <= target_limit:
+        return [table_content]
+    lines = table_content.splitlines()
+    header = lines[:2]
+    rows = lines[2:]
+    header_content = "\n".join(header)
+    if estimate_tokens(header_content, options) > options["hardMaxTokens"]:
+        raise ValueError("L'en-tete du tableau depasse hardMaxTokens.")
+    chunks = []
+    current_rows = []
+    for row in rows:
+        candidate = "\n".join([*header, *current_rows, row])
+        if current_rows and estimate_tokens(candidate, options) > target_limit:
+            chunks.append("\n".join([*header, *current_rows]))
+            current_rows = []
+        if estimate_tokens("\n".join([*header, row]), options) > options["hardMaxTokens"]:
+            raise ValueError("Une ligne de tableau depasse hardMaxTokens.")
+        current_rows.append(row)
+    if current_rows:
+        chunks.append("\n".join([*header, *current_rows]))
+    if not chunks:
+        chunks = [header_content]
+    if any(estimate_tokens(chunk, options) > options["hardMaxTokens"] for chunk in chunks):
+        raise ValueError("Un tableau genere depasse hardMaxTokens.")
+    return chunks
+
+
+def split_text_zone(text, options):
+    """Split ordinary prose with paragraph merging and local overlap."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    if not options.get("mergeSmallParagraphs", True):
+        chunks = []
+        for paragraph in paragraphs or [text]:
+            if estimate_tokens(paragraph, options) <= options["chunkMaxTokens"]:
+                chunks.append(paragraph)
+            else:
+                chunks.extend(
+                    split_by_token_window(
+                        paragraph,
+                        options["chunkMaxTokens"],
+                        options["chunkOverlapTokens"],
+                        options,
+                    )
+                )
+        return chunks
+
+    if estimate_tokens(text, options) <= options["chunkMaxTokens"]:
+        return [text]
+    paragraphs = merge_small_paragraphs(paragraphs or [text], options)
+    chunks = []
+    current_parts = []
+    for paragraph in paragraphs:
+        if estimate_tokens(paragraph, options) > options["chunkMaxTokens"]:
+            if current_parts:
+                chunks.append("\n\n".join(current_parts).strip())
+                current_parts = []
+            chunks.extend(
+                split_by_token_window(
+                    paragraph,
+                    options["chunkMaxTokens"],
+                    options["chunkOverlapTokens"],
+                    options,
+                )
+            )
+            continue
+
+        candidate_text = "\n\n".join([*current_parts, paragraph]).strip()
+        if not current_parts or estimate_tokens(candidate_text, options) <= options["chunkMaxTokens"]:
+            current_parts.append(paragraph)
+            continue
+        chunks.append("\n\n".join(current_parts).strip())
+        current_parts = [paragraph]
+    if current_parts:
+        chunks.append("\n\n".join(current_parts).strip())
+    chunks = [chunk for chunk in chunks if chunk]
+    if any(estimate_tokens(chunk, options) > options["hardMaxTokens"] for chunk in chunks):
+        raise ValueError("Un chunk de texte genere depasse hardMaxTokens.")
+    return chunks
+
+
 def split_markdown_sections(markdown_text: str, heading_max_level: int):
     """Split markdown sections."""
     text = (markdown_text or "").replace("\r\n", "\n")
@@ -2773,6 +3700,7 @@ def split_markdown_sections(markdown_text: str, heading_max_level: int):
     current_title = "Introduction"
     current_path = ["Introduction"]
     current_lines = []
+    active_fence = ""
 
     def push_current_section():
         """Run push current section."""
@@ -2787,7 +3715,22 @@ def split_markdown_sections(markdown_text: str, heading_max_level: int):
             )
 
     for line in text.split("\n"):
-        heading_match = re.match(r"^(#{1,6})\s+(.*)$", line.strip())
+        if active_fence:
+            closing_pattern = rf"^\s*{re.escape(active_fence[0])}{{{len(active_fence)},}}\s*$"
+            if re.match(closing_pattern, line):
+                active_fence = ""
+            current_lines.append(line)
+            continue
+        fence_match = re.match(r"^\s*(```+|~~~+)(.*)$", line)
+        if fence_match:
+            active_fence = fence_match.group(1)
+            current_lines.append(line)
+            continue
+        heading_match = (
+            None
+            if active_fence
+            else re.match(r"^(#{1,6})\s+(.*)$", line.strip())
+        )
         if heading_match:
             level = len(heading_match.group(1))
             title = heading_match.group(2).strip() or "Section"
@@ -2820,65 +3763,163 @@ def split_markdown_sections(markdown_text: str, heading_max_level: int):
 
 
 def split_section_content(section_content: str, options):
-    """Split section text into size-constrained chunks with overlap.
+    """Backward-compatible text-only view of structure-aware section chunks."""
+    return [part["content"] for part in split_section_content_aware(section_content, options)]
 
-    The algorithm first hard-splits oversized paragraphs, then recomposes
-    final chunks while keeping a small overlap window for retrieval continuity.
-    """
+
+def split_section_content_aware(section_content: str, options):
+    """Split a section without crossing strict code, table or custom zones."""
     section_content = (section_content or "").strip()
     if not section_content:
         return []
-
-    if estimate_tokens(section_content, options) <= options["chunkMaxTokens"]:
-        return [section_content]
-
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", section_content) if p.strip()]
-    if not paragraphs:
-        paragraphs = [section_content]
-
-    # Pass 1: enforce the hard token budget at paragraph granularity.
-    hard_limited_parts = []
-    for paragraph in paragraphs:
-        if estimate_tokens(paragraph, options) <= options["chunkMaxTokens"]:
-            hard_limited_parts.append(paragraph)
-        else:
-            hard_limited_parts.extend(
-                split_by_token_window(
-                    paragraph,
-                    options["chunkMaxTokens"],
-                    options["chunkOverlapTokens"],
-                    options,
+    strict_zone_types = set(options.get("strictZoneTypes") or [])
+    parts = []
+    for zone in extract_chunk_zones(section_content):
+        zone_type = zone["zone_type"]
+        is_strict = zone_type in strict_zone_types
+        if zone_type == "code" and options.get("codeAware", True):
+            contents = split_code_zone(zone["content"], options)
+            chunk_type = "code"
+        elif zone_type == "table" and options.get("tableAware", True):
+            contents = split_table_zone(zone["content"], options)
+            chunk_type = "table"
+        elif zone_type == "strict":
+            if estimate_tokens(zone["content"], options) > options["hardMaxTokens"]:
+                raise ValueError(
+                    f"Zone stricte '{zone.get('label') or 'sans nom'}' depasse hardMaxTokens."
                 )
+            contents = [zone["content"]]
+            chunk_type = "strict"
+        else:
+            contents = split_text_zone(zone["content"], options)
+            chunk_type = "markdown"
+        for content in contents:
+            parts.append(
+                {
+                    "content": content,
+                    "zone_type": zone_type,
+                    "chunk_type": chunk_type,
+                    "strict_zone": is_strict,
+                }
             )
+    return parts
 
-    # Pass 2: merge parts into readable chunks and inject overlap context.
-    chunks = []
-    current_parts = []
-    for part in hard_limited_parts:
-        candidate_parts = current_parts + [part]
-        candidate_text = "\n\n".join(candidate_parts).strip()
-        if not current_parts or estimate_tokens(candidate_text, options) <= options["chunkMaxTokens"]:
-            current_parts.append(part)
-            continue
 
-        chunks.append("\n\n".join(current_parts).strip())
-        overlap_seed = split_by_token_window(
-            chunks[-1],
-            options["chunkOverlapTokens"],
-            0,
-            options,
+def build_summary_short(text, max_chars=240):
+    """Build a compact deterministic summary suitable for retrieval previews."""
+    max_chars = max(0, int(max_chars))
+    if max_chars == 0:
+        return ""
+    cleaned = re.sub(r"(?m)^#{1,6}\s+", "", text or "")
+    cleaned = re.sub(r"(?m)^(```+|~~~+).*$", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return ""
+    first_sentence = re.split(r"(?<=[.!?])\s+", cleaned, maxsplit=1)[0]
+    summary = first_sentence if len(first_sentence) <= max_chars else cleaned[:max_chars]
+    is_truncated = len(summary) < len(cleaned)
+    if not is_truncated:
+        return summary[:max_chars]
+    if max_chars == 1:
+        return "…"
+    return summary[: max_chars - 1].rstrip(" ,;:-") + "…"
+
+
+def add_section_heading_to_text(text, section_title, options):
+    """Prefix prose with its heading without exceeding the hard token budget."""
+    body = (text or "").strip()
+    title = (section_title or "").strip()
+    if not body or not title or title == "Introduction" or body.startswith(title):
+        return [body]
+
+    prefixed = f"{title}\n\n{body}"
+    if estimate_tokens(prefixed, options) <= options["hardMaxTokens"]:
+        return [prefixed]
+
+    if options["tokenEstimator"] == "chars":
+        hard_capacity = options["hardMaxTokens"] * options["charsPerToken"]
+        target_capacity = options["chunkMaxTokens"] * options["charsPerToken"]
+        prefix_length = len(title) + 2
+        hard_body_tokens = (hard_capacity - prefix_length) // options["charsPerToken"]
+        target_body_tokens = (target_capacity - prefix_length) // options["charsPerToken"]
+    else:
+        title_tokens = estimate_tokens(title, options)
+        hard_body_tokens = options["hardMaxTokens"] - title_tokens
+        target_body_tokens = options["chunkMaxTokens"] - title_tokens
+
+    if hard_body_tokens < 1:
+        # The title remains available in metadata when it cannot safely be
+        # repeated inside the chunk content.
+        return [body]
+
+    body_options = options.copy()
+    body_options["hardMaxTokens"] = hard_body_tokens
+    body_options["chunkMaxTokens"] = max(
+        1,
+        min(hard_body_tokens, target_body_tokens),
+    )
+    # The body part was already split once with the configured overlap.
+    body_options["chunkOverlapTokens"] = 0
+    body_options["smallParagraphMinTokens"] = min(
+        body_options["smallParagraphMinTokens"],
+        body_options["chunkMaxTokens"],
+    )
+    chunks = [
+        f"{title}\n\n{part}"
+        for part in split_text_zone(body, body_options)
+        if part
+    ]
+    if any(estimate_tokens(chunk, options) > options["hardMaxTokens"] for chunk in chunks):
+        raise ValueError("Le titre de section fait depasser hardMaxTokens.")
+    return chunks
+
+
+def finalize_chunk_lineage(items):
+    """Recompute linked-list pointers and position ratios after filtering."""
+    item_count = len(items)
+    for index, item in enumerate(items):
+        metadata = item["metadata"]
+        metadata["previous_chunk_id"] = items[index - 1]["chunk_id"] if index > 0 else None
+        metadata["next_chunk_id"] = items[index + 1]["chunk_id"] if index < item_count - 1 else None
+        metadata["document_position_ratio"] = (
+            round(index / float(item_count - 1), 5) if item_count > 1 else 0.0
         )
-        overlap_text = overlap_seed[-1].strip() if overlap_seed else ""
-        current_parts = [part]
-        if overlap_text:
-            with_overlap = f"{overlap_text}\n\n{part}".strip()
-            if estimate_tokens(with_overlap, options) <= options["hardMaxTokens"]:
-                current_parts = [overlap_text, part]
+    return items
 
-    if current_parts:
-        chunks.append("\n\n".join(current_parts).strip())
 
-    return [chunk for chunk in chunks if chunk]
+def update_persisted_chunk_lineage(cur, project_slug, ordered_chunk_ids):
+    """Persist pointers and normalized positions for an ordered chunk list."""
+    chunk_count = len(ordered_chunk_ids)
+    for index, chunk_id in enumerate(ordered_chunk_ids):
+        previous_chunk_id = ordered_chunk_ids[index - 1] if index > 0 else None
+        next_chunk_id = (
+            ordered_chunk_ids[index + 1]
+            if index < chunk_count - 1
+            else None
+        )
+        position_ratio = (
+            round(index / float(chunk_count - 1), 5)
+            if chunk_count > 1
+            else 0.0
+        )
+        cur.execute(
+            f"""
+            UPDATE public.{CHUNK_METADATA_TABLE}
+            SET previous_chunk_id = %s,
+                next_chunk_id = %s,
+                document_position_ratio = %s,
+                updated_at = now()
+            WHERE project_slug = %s
+              AND chunk_id = %s;
+            """,
+            (
+                previous_chunk_id,
+                next_chunk_id,
+                position_ratio,
+                project_slug,
+                chunk_id,
+            ),
+        )
 
 
 def build_chunks_for_document(document, previous_document_id, options):
@@ -2899,45 +3940,52 @@ def build_chunks_for_document(document, previous_document_id, options):
 
     items = []
     for section in sections:
-        section_parts = split_section_content(section["content"], options)
+        section_parts = split_section_content_aware(section["content"], options)
         if not section_parts:
-            section_parts = [section["section_title"]]
+            section_parts = [
+                {
+                    "content": section["section_title"],
+                    "zone_type": "text",
+                    "chunk_type": "markdown",
+                    "strict_zone": False,
+                }
+            ]
 
         for section_part in section_parts:
-            chunk_id = str(uuid4())
-            text = section_part.strip()
+            text = section_part["content"].strip()
             if not text:
                 text = section["section_title"]
-            if (
-                section["section_title"]
-                and section["section_title"] != "Introduction"
-                and not text.startswith(section["section_title"])
-            ):
-                text = f"{section['section_title']}\n\n{text}"
-            items.append(
-                {
-                    "chunk_id": chunk_id,
-                    "pageContent": text,
-                    "text": text,
-                    "metadata": {
-                        "document_id": document["uuid"],
-                        "section_title": section["section_title"],
-                        "section_path": section["section_path"],
-                        "previous_document_id": previous_document_id,
-                        "previous_chunk_id": None,
-                        "next_chunk_id": None,
-                    },
-                }
+            texts = (
+                add_section_heading_to_text(text, section["section_title"], options)
+                if section_part["zone_type"] == "text"
+                else [text]
             )
+            for final_text in texts:
+                if estimate_tokens(final_text, options) > options["hardMaxTokens"]:
+                    raise ValueError("Un chunk genere depasse hardMaxTokens.")
+                chunk_id = str(uuid4())
+                items.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "pageContent": final_text,
+                        "text": final_text,
+                        "metadata": {
+                            "document_id": document["uuid"],
+                            "section_title": section["section_title"],
+                            "section_path": section["section_path"],
+                            "previous_document_id": previous_document_id,
+                            "previous_chunk_id": None,
+                            "next_chunk_id": None,
+                            "summary_short": build_summary_short(final_text),
+                            "document_position_ratio": 0.0,
+                            "chunk_type": section_part["chunk_type"],
+                            "zone_type": section_part["zone_type"],
+                            "strict_zone": section_part["strict_zone"],
+                        },
+                    }
+                )
 
-    # Build intra-document linked-list pointers for navigation in retrieval UIs.
-    for index, item in enumerate(items):
-        if index > 0:
-            item["metadata"]["previous_chunk_id"] = items[index - 1]["chunk_id"]
-        if index < len(items) - 1:
-            item["metadata"]["next_chunk_id"] = items[index + 1]["chunk_id"]
-
-    return items
+    return finalize_chunk_lineage(items)
 
 
 def chunkify_project_shards(project_slug: str, options):
@@ -2957,6 +4005,8 @@ def chunkify_project_shards(project_slug: str, options):
                 raise ValueError(f"La table '{shard_table}' est introuvable.")
             if not table_exists(cur, chunk_table):
                 raise ValueError(f"La table '{chunk_table}' est introuvable.")
+
+            lock_project_corpus_mutation(cur, project_slug)
 
             cur.execute(
                 sql.SQL(
@@ -3000,6 +4050,7 @@ def chunkify_project_shards(project_slug: str, options):
                         for chunk_item in document_chunks
                         if chunk_item["metadata"].get("section_path") not in excluded_section_paths
                     ]
+                finalize_chunk_lineage(document_chunks)
                 previous_document_id = document["uuid"]
 
                 # Regeneration is idempotent: remove previous chunks for this shard first.
@@ -3053,9 +4104,15 @@ def chunkify_project_shards(project_slug: str, options):
                             previous_document_id,
                             previous_chunk_id,
                             next_chunk_id,
+                            summary_short,
+                            document_position_ratio,
+                            chunk_type,
+                            zone_type,
+                            strict_zone,
+                            metadata,
                             quality_score,
                             updated_at
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                         ON CONFLICT (chunk_id)
                         DO UPDATE SET
                             project_slug = EXCLUDED.project_slug,
@@ -3066,6 +4123,12 @@ def chunkify_project_shards(project_slug: str, options):
                             previous_document_id = EXCLUDED.previous_document_id,
                             previous_chunk_id = EXCLUDED.previous_chunk_id,
                             next_chunk_id = EXCLUDED.next_chunk_id,
+                            summary_short = EXCLUDED.summary_short,
+                            document_position_ratio = EXCLUDED.document_position_ratio,
+                            chunk_type = EXCLUDED.chunk_type,
+                            zone_type = EXCLUDED.zone_type,
+                            strict_zone = EXCLUDED.strict_zone,
+                            metadata = EXCLUDED.metadata,
                             quality_score = EXCLUDED.quality_score,
                             updated_at = now();
                         """,
@@ -3079,6 +4142,18 @@ def chunkify_project_shards(project_slug: str, options):
                             chunk_item["metadata"]["previous_document_id"],
                             chunk_item["metadata"]["previous_chunk_id"],
                             chunk_item["metadata"]["next_chunk_id"],
+                            chunk_item["metadata"]["summary_short"],
+                            chunk_item["metadata"]["document_position_ratio"],
+                            chunk_item["metadata"]["chunk_type"],
+                            chunk_item["metadata"]["zone_type"],
+                            chunk_item["metadata"]["strict_zone"],
+                            Json(
+                                {
+                                    "zone_type": chunk_item["metadata"]["zone_type"],
+                                    "strict_zone": chunk_item["metadata"]["strict_zone"],
+                                    "chunk_options": options,
+                                }
+                            ),
                             compute_quality_score(chunk_item["pageContent"]),
                         ),
                     )
@@ -3390,9 +4465,14 @@ def get_document_processing_record(cur, document_id: str):
             document_id,
             project_slug,
             normalization_version,
+            raw_content,
             normalized_content,
             rendered_text,
             structured_content,
+            normalization_config,
+            detected_language,
+            content_type,
+            extracted_metadata,
             approval_status,
             approval_comment,
             approved_by,
@@ -3413,16 +4493,21 @@ def get_document_processing_record(cur, document_id: str):
         "document_id": row[0],
         "project_slug": row[1],
         "normalization_version": row[2],
-        "normalized_content": row[3] or "",
-        "rendered_text": row[4] or "",
-        "structured_content": row[5] or {"section_count": 0, "sections": []},
-        "approval_status": row[6],
-        "approval_comment": row[7] or "",
-        "approved_by": row[8] or "",
-        "approved_at": to_iso_or_none(row[9]),
-        "quality_score": float(row[10]) if row[10] is not None else None,
-        "created_at": to_iso_or_none(row[11]),
-        "updated_at": to_iso_or_none(row[12]),
+        "raw_content": row[3] or "",
+        "normalized_content": row[4] or "",
+        "rendered_text": row[5] or "",
+        "structured_content": row[6] or {"section_count": 0, "sections": []},
+        "normalization_config": row[7] or {},
+        "detected_language": row[8] or "und",
+        "content_type": row[9] or "unknown",
+        "extracted_metadata": row[10] or {},
+        "approval_status": row[11],
+        "approval_comment": row[12] or "",
+        "approved_by": row[13] or "",
+        "approved_at": to_iso_or_none(row[14]),
+        "quality_score": float(row[15]) if row[15] is not None else None,
+        "created_at": to_iso_or_none(row[16]),
+        "updated_at": to_iso_or_none(row[17]),
     }
 
 
@@ -3431,9 +4516,14 @@ def upsert_document_processing_record(
     document_id: str,
     project_slug: str,
     normalization_version=None,
+    raw_content=None,
     normalized_content=None,
     rendered_text=None,
     structured_content=None,
+    normalization_config=None,
+    detected_language=None,
+    content_type=None,
+    extracted_metadata=None,
     approval_status=None,
     approval_comment=None,
     approved_by=None,
@@ -3452,12 +4542,29 @@ def upsert_document_processing_record(
             if normalization_version is not None
             else existing["normalization_version"]
         )
+        merged_raw_content = raw_content if raw_content is not None else existing["raw_content"]
         merged_normalized_content = (
             normalized_content if normalized_content is not None else existing["normalized_content"]
         )
         merged_rendered_text = rendered_text if rendered_text is not None else existing["rendered_text"]
         merged_structured_content = (
             structured_content if structured_content is not None else existing["structured_content"]
+        )
+        merged_normalization_config = (
+            normalization_config
+            if normalization_config is not None
+            else existing["normalization_config"]
+        )
+        merged_detected_language = (
+            detected_language
+            if detected_language is not None
+            else existing["detected_language"]
+        )
+        merged_content_type = content_type if content_type is not None else existing["content_type"]
+        merged_extracted_metadata = (
+            extracted_metadata
+            if extracted_metadata is not None
+            else existing["extracted_metadata"]
         )
         merged_approval_status = approval_status if approval_status is not None else existing["approval_status"]
         merged_approval_comment = approval_comment if approval_comment is not None else existing["approval_comment"]
@@ -3477,9 +4584,14 @@ def upsert_document_processing_record(
             SET
                 project_slug = %s,
                 normalization_version = %s,
+                raw_content = %s,
                 normalized_content = %s,
                 rendered_text = %s,
                 structured_content = %s,
+                normalization_config = %s,
+                detected_language = %s,
+                content_type = %s,
+                extracted_metadata = %s,
                 approval_status = %s,
                 approval_comment = %s,
                 approved_by = %s,
@@ -3491,9 +4603,14 @@ def upsert_document_processing_record(
             (
                 merged_project_slug,
                 merged_normalization_version or DEFAULT_NORMALIZATION_VERSION,
+                merged_raw_content,
                 merged_normalized_content,
                 merged_rendered_text,
                 Json(merged_structured_content) if merged_structured_content is not None else None,
+                Json(merged_normalization_config),
+                merged_detected_language or "und",
+                merged_content_type or "unknown",
+                Json(merged_extracted_metadata),
                 merged_approval_status or "pending",
                 merged_approval_comment or None,
                 merged_approved_by or None,
@@ -3517,24 +4634,34 @@ def upsert_document_processing_record(
                 document_id,
                 project_slug,
                 normalization_version,
+                raw_content,
                 normalized_content,
                 rendered_text,
                 structured_content,
+                normalization_config,
+                detected_language,
+                content_type,
+                extracted_metadata,
                 approval_status,
                 approval_comment,
                 approved_by,
                 approved_at,
                 quality_score,
                 updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now());
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now());
             """,
             (
                 document_id,
                 project_slug,
                 normalization_version or DEFAULT_NORMALIZATION_VERSION,
+                raw_content,
                 normalized_content,
                 rendered_text,
                 Json(structured_content) if structured_content is not None else None,
+                Json(normalization_config or {}),
+                detected_language or "und",
+                content_type or "unknown",
+                Json(extracted_metadata or {}),
                 initial_approval_status,
                 approval_comment or None,
                 approved_by or None,
@@ -3783,13 +4910,19 @@ def get_document_review_chunks(cur, project_slug: str, document_id: str, exclude
                 m.llm_config_id,
                 m.llm_profile_type,
                 m.llm_audit_session_id,
-                m.metadata
+                m.metadata,
+                m.summary_short,
+                m.document_position_ratio,
+                m.zone_type,
+                m.strict_zone
             FROM {{}} AS c
             LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
                 ON m.chunk_id = c.uuid
                AND m.project_slug = %s
             WHERE c.shard_id = %s
-            ORDER BY c.uuid;
+            ORDER BY c.shard_id,
+                     m.document_position_ratio NULLS LAST,
+                     c.uuid;
             """
         ).format(sql.Identifier("public", chunk_table)),
         (project_slug, document_id),
@@ -3824,6 +4957,10 @@ def get_document_review_chunks(cur, project_slug: str, document_id: str, exclude
                     "llm_profile_type": row[16] or "",
                     "llm_audit_session_id": row[17] or "",
                     "extra": row[18] or {},
+                    "summary_short": row[19] or build_summary_short(content_document),
+                    "document_position_ratio": float(row[20]) if row[20] is not None else 0.0,
+                    "zone_type": row[21] or "text",
+                    "strict_zone": bool(row[22]),
                 },
             }
         )
@@ -3839,25 +4976,40 @@ def get_document_review_payload(project_slug: str, document_id: str):
             project = find_project_by_slug(cur, document["project_slug"])
             processing = get_document_processing_record(cur, document["uuid"])
 
-            normalized_content = normalize_document_content(document["content_document"])
+            fallback_pipeline = run_normalization_pipeline(document["content_document"])
+            normalized_content = fallback_pipeline["normalized_content"]
             if processing:
+                if not processing.get("raw_content"):
+                    processing["raw_content"] = document["content_document"]
                 if not processing.get("normalized_content"):
                     processing["normalized_content"] = normalized_content
                 if not processing.get("rendered_text"):
-                    processing["rendered_text"] = processing["normalized_content"]
+                    processing["rendered_text"] = fallback_pipeline["rendered_text"]
                 if not processing.get("structured_content"):
                     processing["structured_content"] = build_structured_content(
                         processing["normalized_content"],
-                        heading_max_level=3,
+                        heading_max_level=6,
+                        extracted_metadata=fallback_pipeline["extracted_metadata"],
                     )
+                if not processing.get("normalization_config"):
+                    processing["normalization_config"] = fallback_pipeline["normalization_config"]
             else:
                 processing = {
                     "document_id": document["uuid"],
                     "project_slug": document["project_slug"],
                     "normalization_version": DEFAULT_NORMALIZATION_VERSION,
+                    "raw_content": document["content_document"],
                     "normalized_content": normalized_content,
-                    "rendered_text": normalized_content,
-                    "structured_content": build_structured_content(normalized_content, heading_max_level=3),
+                    "rendered_text": fallback_pipeline["rendered_text"],
+                    "structured_content": build_structured_content(
+                        normalized_content,
+                        heading_max_level=6,
+                        extracted_metadata=fallback_pipeline["extracted_metadata"],
+                    ),
+                    "normalization_config": fallback_pipeline["normalization_config"],
+                    "detected_language": fallback_pipeline["detected_language"],
+                    "content_type": fallback_pipeline["content_type"],
+                    "extracted_metadata": fallback_pipeline["extracted_metadata"],
                     "approval_status": "pending",
                     "approval_comment": "",
                     "approved_by": "",
@@ -4130,7 +5282,11 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
                 m.chunk_type,
                 m.chunking_method,
                 m.llm_config_id,
-                m.llm_profile_type
+                m.llm_profile_type,
+                m.summary_short,
+                m.document_position_ratio,
+                m.zone_type,
+                m.strict_zone
             FROM {{}} c
             LEFT JOIN public.{CHUNK_METADATA_TABLE} m
                 ON m.chunk_id = c.uuid
@@ -4138,7 +5294,9 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
             LEFT JOIN public.{DOCUMENT_PROCESSING_TABLE} p
                 ON p.document_id = c.shard_id
                AND p.project_slug = %s
-            ORDER BY c.uuid;
+            ORDER BY c.shard_id,
+                     m.document_position_ratio NULLS LAST,
+                     c.uuid;
             """
         ).format(sql.Identifier("public", chunk_table)),
         (project_slug, project_slug),
@@ -4165,6 +5323,10 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
         chunking_method = row[15] or "deterministic"
         llm_config_id = row[16] or ""
         llm_profile_type = row[17] or ""
+        summary_short = row[18] or build_summary_short(content_document)
+        document_position_ratio = float(row[19]) if row[19] is not None else 0.0
+        zone_type = row[20] or "text"
+        strict_zone = bool(row[21])
         is_excluded = section_path in excluded_paths_by_document.get(shard_id, set())
 
         if row[12] is None:
@@ -4229,6 +5391,10 @@ def collect_project_chunks(cur, project_slug: str, quality_min: float = 0.0, inc
                     "chunking_method": chunking_method,
                     "llm_config_id": llm_config_id,
                     "llm_profile_type": llm_profile_type,
+                    "summary_short": summary_short,
+                    "document_position_ratio": document_position_ratio,
+                    "zone_type": zone_type,
+                    "strict_zone": strict_zone,
                 },
             }
         )
@@ -4249,11 +5415,10 @@ def import_documents_for_project(project_slug: str, documents):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             project = find_project_by_slug(cur, project_slug)
-            create_project_tables(cur, project_slug)
+            table_names = ensure_project_tables_exist(cur, project_slug)
             ensure_business_tables(cur)
-            shard_table = f"{project_slug}_shard"
-            if not table_exists(cur, shard_table):
-                raise ValueError(f"La table '{shard_table}' est introuvable.")
+            shard_table = table_names["shard_table"]
+            lock_project_corpus_mutation(cur, project_slug)
 
             for index, document_payload in enumerate(documents):
                 if not isinstance(document_payload, dict):
@@ -4306,6 +5471,7 @@ def import_documents_for_project(project_slug: str, documents):
                     cur,
                     document_id=shard_uuid,
                     project_slug=project_slug,
+                    raw_content=content_document,
                     quality_score=initial_quality_score,
                     approval_status="pending",
                 )
@@ -4326,7 +5492,12 @@ def import_documents_for_project(project_slug: str, documents):
     }
 
 
-def normalize_document_by_id(document_id: str, project_slug: str = "", normalization_version: str = ""):
+def normalize_document_by_id(
+    document_id: str,
+    project_slug: str = "",
+    normalization_version: str = "",
+    normalization_options=None,
+):
     """Normalize one document and persist its processing snapshot.
 
     The function computes normalized/structured forms plus a quality score, then
@@ -4337,8 +5508,16 @@ def normalize_document_by_id(document_id: str, project_slug: str = "", normaliza
         with conn.cursor() as cur:
             ensure_business_tables(cur)
             document = find_document_record(cur, document_id, project_slug)
-            normalized_content = normalize_document_content(document["content_document"])
-            structured_content = build_structured_content(normalized_content, heading_max_level=3)
+            pipeline = run_normalization_pipeline(
+                document["content_document"],
+                normalization_options,
+            )
+            normalized_content = pipeline["normalized_content"]
+            structured_content = build_structured_content(
+                normalized_content,
+                heading_max_level=pipeline["normalization_config"]["heading_max_level"],
+                extracted_metadata=pipeline["extracted_metadata"],
+            )
             quality_score = compute_quality_score(normalized_content)
 
             processing = upsert_document_processing_record(
@@ -4346,9 +5525,14 @@ def normalize_document_by_id(document_id: str, project_slug: str = "", normaliza
                 document_id=document["uuid"],
                 project_slug=document["project_slug"],
                 normalization_version=version,
+                raw_content=pipeline["raw_content"],
                 normalized_content=normalized_content,
-                rendered_text=normalized_content,
+                rendered_text=pipeline["rendered_text"],
                 structured_content=structured_content,
+                normalization_config=pipeline["normalization_config"],
+                detected_language=pipeline["detected_language"],
+                content_type=pipeline["content_type"],
+                extracted_metadata=pipeline["extracted_metadata"],
                 quality_score=quality_score,
             )
 
@@ -4357,8 +5541,14 @@ def normalize_document_by_id(document_id: str, project_slug: str = "", normaliza
         "project_slug": document["project_slug"],
         "normalization_version": version,
         "quality_score": quality_score,
+        "raw_content": pipeline["raw_content"],
         "normalized_content": normalized_content,
+        "rendered_text": pipeline["rendered_text"],
         "structured_content": processing["structured_content"],
+        "normalization_config": processing["normalization_config"],
+        "detected_language": processing["detected_language"],
+        "content_type": processing["content_type"],
+        "extracted_metadata": processing["extracted_metadata"],
         "approval_status": processing["approval_status"],
     }
 
@@ -4573,13 +5763,18 @@ def get_document_lineage(document_id: str, project_slug: str = ""):
                             m.previous_document_id,
                             m.previous_chunk_id,
                             m.next_chunk_id,
-                            m.quality_score
+                            m.quality_score,
+                            m.summary_short,
+                            m.document_position_ratio,
+                            m.chunk_type,
+                            m.zone_type,
+                            m.strict_zone
                         FROM {{}} c
                         LEFT JOIN public.{CHUNK_METADATA_TABLE} m
                             ON m.chunk_id = c.uuid
                            AND m.project_slug = %s
                         WHERE c.shard_id = %s
-                        ORDER BY c.uuid;
+                        ORDER BY m.document_position_ratio NULLS LAST, c.uuid;
                         """
                     ).format(sql.Identifier("public", chunk_table)),
                     (document["project_slug"], document["uuid"]),
@@ -4601,6 +5796,11 @@ def get_document_lineage(document_id: str, project_slug: str = ""):
                         "previous_chunk_id": row[5],
                         "next_chunk_id": row[6],
                         "quality_score": quality_score,
+                        "summary_short": row[8] or build_summary_short(row[2] or ""),
+                        "document_position_ratio": float(row[9]) if row[9] is not None else 0.0,
+                        "chunk_type": row[10] or "markdown",
+                        "zone_type": row[11] or "text",
+                        "strict_zone": bool(row[12]),
                     }
                 )
 
@@ -4736,6 +5936,17 @@ def mcp_tools_catalog():
                     "document_id": {"type": "string"},
                     "project_slug": {"type": "string"},
                     "normalization_version": {"type": "string"},
+                    "normalization_options": {
+                        "type": "object",
+                        "properties": {
+                            "enabled_stages": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                            },
+                            "heading_max_level": {"type": "integer"},
+                            "preserve_code_blocks": {"type": "boolean"},
+                        },
+                    },
                 },
             },
         },
@@ -4753,6 +5964,17 @@ def mcp_tools_catalog():
                     "headingMaxLevel": {"type": "integer"},
                     "tokenEstimator": {"type": "string"},
                     "charsPerToken": {"type": "integer"},
+                    "codeAware": {"type": "boolean"},
+                    "tableAware": {"type": "boolean"},
+                    "mergeSmallParagraphs": {"type": "boolean"},
+                    "smallParagraphMinTokens": {"type": "integer"},
+                    "strictZoneTypes": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["code", "table", "strict"],
+                        },
+                    },
                 },
             },
         },
@@ -4843,6 +6065,7 @@ def execute_mcp_tool(tool_name: str, arguments):
             document_id=parsed["document_id"],
             project_slug=parsed.get("project_slug", ""),
             normalization_version=parsed.get("normalization_version", ""),
+            normalization_options=parsed.get("normalization_options", {}),
         )
 
     if tool_name == "floppy.chunk_project":

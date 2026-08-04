@@ -128,6 +128,26 @@
               </select>
             </label>
             <label>charsPerToken<input type="number" name="charsPerToken" value="4" min="1"></label>
+            <label>codeAware
+              <select name="codeAware">
+                <option value="true" selected>oui</option>
+                <option value="false">non</option>
+              </select>
+            </label>
+            <label>tableAware
+              <select name="tableAware">
+                <option value="true" selected>oui</option>
+                <option value="false">non</option>
+              </select>
+            </label>
+            <label>mergeSmallParagraphs
+              <select name="mergeSmallParagraphs">
+                <option value="true" selected>oui</option>
+                <option value="false">non</option>
+              </select>
+            </label>
+            <label>smallParagraphMinTokens<input type="number" name="smallParagraphMinTokens" value="40" min="1"></label>
+            <label>strictZoneTypes (CSV)<input type="text" name="strictZoneTypes" value="code,table,strict"></label>
           </div>
           <button
             type="submit"

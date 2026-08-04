@@ -25,7 +25,7 @@
 
   {% if show_admin_menu %}
     <div class="nav-session" aria-label="Session admin">
-      <span><i class="fa-solid fa-user-shield" aria-hidden="true"></i>{{ nav_username or "admin" }}</span>
+      <span><i class="fa-solid fa-user-shield" aria-hidden="true"></i>{{ nav_username or "admin" }} ({{ admin_role|default("admin", true) }})</span>
       <form method="post" action="{{ url_for('admin_logout') }}">
         <button type="submit" title="Se deconnecter" aria-label="Se deconnecter">
           <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>

@@ -17,11 +17,13 @@ from llm_gateway import (
 )
 from services import (
     CHUNK_METADATA_TABLE,
+    build_summary_short,
     compute_quality_score,
     ensure_business_tables,
     ensure_project_tables_exist,
     list_projects,
     table_exists,
+    update_persisted_chunk_lineage,
 )
 
 
@@ -398,6 +400,24 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
         chunk["next_chunk_id"] = (
             generated_chunks[index + 1]["chunk_id"] if index < len(generated_chunks) - 1 else None
         )
+        chunk["summary_short"] = build_summary_short(chunk["content"])
+        chunk["document_position_ratio"] = (
+            round(index / float(len(generated_chunks) - 1), 5)
+            if len(generated_chunks) > 1
+            else 0.0
+        )
+        chunk["zone_type"] = (
+            "code" if chunk["chunk_type"] in {"code", "json"}
+            else "table" if chunk["chunk_type"] == "table"
+            else "text"
+        )
+        chunk["strict_zone"] = chunk["zone_type"] in {"code", "table"}
+        chunk["metadata"].update(
+            {
+                "zone_type": chunk["zone_type"],
+                "strict_zone": chunk["strict_zone"],
+            }
+        )
 
     chunk_table = table_names["chunk_table"]
     with get_db_connection() as conn:
@@ -415,6 +435,25 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                     f"DELETE FROM public.{CHUNK_METADATA_TABLE} WHERE project_slug = %s AND shard_id = %s;",
                     (slug, selected_shard),
                 )
+                existing_chunk_ids = []
+            else:
+                cur.execute(
+                    sql.SQL(
+                        f"""
+                        SELECT c.uuid
+                        FROM {{}} AS c
+                        LEFT JOIN public.{CHUNK_METADATA_TABLE} AS m
+                          ON m.chunk_id = c.uuid
+                         AND m.project_slug = %s
+                        WHERE c.shard_id = %s
+                        ORDER BY m.document_position_ratio NULLS LAST,
+                                 c.last_date_edit,
+                                 c.uuid;
+                        """
+                    ).format(sql.Identifier("public", chunk_table)),
+                    (slug, selected_shard),
+                )
+                existing_chunk_ids = [row[0] for row in cur.fetchall()]
             for chunk in generated_chunks:
                 cur.execute(
                     sql.SQL(
@@ -452,6 +491,10 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                         previous_document_id,
                         previous_chunk_id,
                         next_chunk_id,
+                        summary_short,
+                        document_position_ratio,
+                        zone_type,
+                        strict_zone,
                         quality_score,
                         chunk_type,
                         chunking_method,
@@ -460,7 +503,7 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                         llm_audit_session_id,
                         metadata,
                         updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())
                     ON CONFLICT (chunk_id)
                     DO UPDATE SET
                         project_slug = EXCLUDED.project_slug,
@@ -471,6 +514,10 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                         previous_document_id = EXCLUDED.previous_document_id,
                         previous_chunk_id = EXCLUDED.previous_chunk_id,
                         next_chunk_id = EXCLUDED.next_chunk_id,
+                        summary_short = EXCLUDED.summary_short,
+                        document_position_ratio = EXCLUDED.document_position_ratio,
+                        zone_type = EXCLUDED.zone_type,
+                        strict_zone = EXCLUDED.strict_zone,
                         quality_score = EXCLUDED.quality_score,
                         chunk_type = EXCLUDED.chunk_type,
                         chunking_method = EXCLUDED.chunking_method,
@@ -490,6 +537,10 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                         None,
                         chunk["previous_chunk_id"],
                         chunk["next_chunk_id"],
+                        chunk["summary_short"],
+                        chunk["document_position_ratio"],
+                        chunk["zone_type"],
+                        chunk["strict_zone"],
                         compute_quality_score(chunk["content"]),
                         chunk["chunk_type"],
                         "llm",
@@ -499,6 +550,14 @@ def generate_chunks_with_llm(project_slug, shard_id, payload, actor="admin"):
                         Json(chunk["metadata"]),
                     ),
                 )
+            update_persisted_chunk_lineage(
+                cur,
+                slug,
+                [
+                    *existing_chunk_ids,
+                    *(chunk["chunk_id"] for chunk in generated_chunks),
+                ],
+            )
         conn.commit()
 
     return {

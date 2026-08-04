@@ -3,6 +3,7 @@
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
+from tempfile import SpooledTemporaryFile
 
 from asgiref.wsgi import WsgiToAsgiInstance
 
@@ -27,12 +28,80 @@ _wsgi_executor = ThreadPoolExecutor(
 class ConcurrentWsgiToAsgiInstance(WsgiToAsgiInstance):
     """Run each Flask request in the shared executor instead of one serialized thread."""
 
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            raise ValueError("WSGI wrapper received a non-HTTP scope")
+        self.scope = scope
+        self.async_send = send
+        with SpooledTemporaryFile(max_size=65536) as body:
+            while True:
+                message = await receive()
+                if message["type"] != "http.request":
+                    raise ValueError("WSGI wrapper received a non-HTTP-request message")
+                body.write(message.get("body", b""))
+                if not message.get("more_body"):
+                    break
+            body.seek(0)
+            await self.run_wsgi_app(body)
+
     async def run_wsgi_app(self, body):
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(_wsgi_executor, self._run_wsgi_app_sync, body)
+        response_start, response_chunks = await loop.run_in_executor(
+            _wsgi_executor,
+            self._run_wsgi_app_sync,
+            body,
+        )
+        await self.async_send(response_start)
+        for chunk in response_chunks:
+            await self.async_send(
+                {"type": "http.response.body", "body": chunk, "more_body": True}
+            )
+        await self.async_send({"type": "http.response.body"})
 
     def _run_wsgi_app_sync(self, body):
-        WsgiToAsgiInstance.run_wsgi_app.__wrapped__(self, body)
+        """Collect a WSGI response without blocking a worker on ASGI sends.
+
+        Calling ``AsyncToSync(send)`` from every WSGI worker can exhaust the
+        executor under sustained concurrency. The event-loop thread now owns
+        all ASGI sends; workers only execute Flask and return bounded chunks.
+        """
+        try:
+            environ = self.build_environ(self.scope, body)
+        except ValueError:
+            return (
+                {
+                    "type": "http.response.start",
+                    "status": 400,
+                    "headers": [(b"content-type", b"text/plain")],
+                },
+                [b"Bad Request: too many duplicate headers"],
+            )
+
+        response_chunks = []
+        bytes_sent = 0
+        iterable = self.wsgi_application(environ, self.start_response)
+        try:
+            for output in iterable:
+                if self.response_content_length is not None:
+                    bytes_allowed = self.response_content_length - bytes_sent
+                    if len(output) > bytes_allowed:
+                        output = output[:bytes_allowed]
+                if output:
+                    response_chunks.append(output)
+                    bytes_sent += len(output)
+                if (
+                    self.response_content_length is not None
+                    and bytes_sent >= self.response_content_length
+                ):
+                    break
+        finally:
+            close = getattr(iterable, "close", None)
+            if close:
+                close()
+
+        if not hasattr(self, "response_start"):
+            raise RuntimeError("WSGI application did not call start_response")
+        return self.response_start, response_chunks
 
 
 class ConcurrentWsgiToAsgi:
