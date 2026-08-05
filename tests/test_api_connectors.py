@@ -51,6 +51,7 @@ os.environ["FLOPPY_API_USERS"] = json.dumps(
 from app import app
 from security import _RATE_BUCKETS
 from db import get_db_connection
+from psycopg2 import sql
 from services import create_project, delete_project
 
 
@@ -453,6 +454,217 @@ class ApiConnectorContractTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200, chunks)
         self.assertEqual(chunks["count"], generated_counts.pop())
+
+    def test_quality_firewall_exact_duplicates_idempotence_and_review_permissions(self):
+        first_content = """# Guide\r
+\r
+Texte suffisamment detaille pour verifier une normalisation identique.\r
+Deuxieme ligne stable pour le calcul de qualite."""
+        normalized_twin = first_content.replace("\r\n", "\n")
+        different_content = """# Autre guide
+
+Ce document porte un contenu reellement distinct sans correspondance exacte.
+Il doit rester independant du groupe de doublons."""
+        response, imported = self.request_json(
+            "POST",
+            f"/api/v1/projects/{self.project_slug}/imports",
+            {
+                "documents": [
+                    {**sample_document(31), "content_document": first_content},
+                    {**sample_document(32), "content_document": normalized_twin},
+                    {**sample_document(33), "content_document": different_content},
+                    {**sample_document(34), "content_document": first_content},
+                ]
+            },
+        )
+        self.assertEqual(response.status_code, 201, imported)
+        first_id, duplicate_id, different_id, raw_duplicate_id = [
+            item["document_id"] for item in imported["documents"]
+        ]
+        self.assertNotEqual(
+            imported["documents"][0]["sha256_raw"],
+            imported["documents"][1]["sha256_raw"],
+        )
+        self.assertEqual(
+            imported["documents"][0]["sha256_normalized"],
+            imported["documents"][1]["sha256_normalized"],
+        )
+
+        response, approved = self.request_json(
+            "POST",
+            f"/api/v1/documents/{duplicate_id}/approve",
+            {
+                "project_slug": self.project_slug,
+                "status": "approved",
+                "comment": "Decision humaine conservee.",
+            },
+        )
+        self.assertEqual(response.status_code, 200, approved)
+
+        canonical_ids = []
+        for _ in range(2):
+            response, normalized = self.request_json(
+                "POST",
+                f"/api/v1/documents/{duplicate_id}/normalize",
+                {"project_slug": self.project_slug},
+            )
+            self.assertEqual(response.status_code, 200, normalized)
+            self.assertEqual(normalized["approval_status"], "approved")
+            duplicate_observations = [
+                item
+                for item in normalized["quality"]["observations"]
+                if item["rule_code"] == "QF_EXACT_DUPLICATE_NORMALIZED"
+            ]
+            self.assertEqual(len(duplicate_observations), 1)
+            canonical_ids.append(
+                duplicate_observations[0]["canonical_document_id"]
+            )
+        self.assertEqual(canonical_ids, [first_id, first_id])
+
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int, COUNT(DISTINCT rule_code)::int,
+                           MAX(octet_length(evidence::text))::int
+                    FROM public.quality_observation
+                    WHERE project_slug = %s
+                      AND document_id = %s
+                      AND ruleset_version = 'quality-firewall/v1';
+                    """,
+                    (self.project_slug, duplicate_id),
+                )
+                row_count, distinct_rule_count, max_evidence_bytes = cur.fetchone()
+                self.assertEqual(row_count, distinct_rule_count)
+                self.assertLessEqual(max_evidence_bytes, 4096)
+
+                cur.execute(
+                    sql.SQL("SELECT content_document FROM {} WHERE uuid = %s;").format(
+                        sql.Identifier("public", f"{self.project_slug}_shard")
+                    ),
+                    (duplicate_id,),
+                )
+                self.assertEqual(cur.fetchone()[0], normalized_twin)
+                cur.execute(
+                    """
+                    SELECT approval_status, approval_comment
+                    FROM public.document_processing
+                    WHERE document_id = %s;
+                    """,
+                    (duplicate_id,),
+                )
+                self.assertEqual(
+                    cur.fetchone(),
+                    ("approved", "Decision humaine conservee."),
+                )
+                cur.execute(
+                    """
+                    SELECT COUNT(*)::int
+                    FROM public.quality_observation
+                    WHERE project_slug = %s
+                      AND document_id = %s
+                      AND rule_code LIKE 'QF_EXACT_DUPLICATE%%';
+                    """,
+                    (self.project_slug, different_id),
+                )
+                self.assertEqual(cur.fetchone()[0], 0)
+                cur.execute(
+                    """
+                    SELECT canonical_document_id
+                    FROM public.quality_observation
+                    WHERE project_slug = %s
+                      AND document_id = %s
+                      AND rule_code = 'QF_EXACT_DUPLICATE_RAW';
+                    """,
+                    (self.project_slug, raw_duplicate_id),
+                )
+                self.assertEqual(cur.fetchone()[0], first_id)
+
+        response, alternate_version = self.request_json(
+            "POST",
+            f"/api/v1/documents/{raw_duplicate_id}/normalize",
+            {
+                "project_slug": self.project_slug,
+                "normalization_version": "v2-quality-history-test",
+            },
+        )
+        self.assertEqual(response.status_code, 200, alternate_version)
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT normalization_hash_version)::int
+                    FROM public.quality_observation
+                    WHERE project_slug = %s
+                      AND document_id = %s
+                      AND ruleset_version = 'quality-firewall/v1';
+                    """,
+                    (self.project_slug, raw_duplicate_id),
+                )
+                self.assertEqual(cur.fetchone()[0], 2)
+
+        second_project = f"Quality Isolation {uuid4().hex[:12]}"
+        _, second_slug = create_project(second_project)
+        try:
+            isolated = self.client.post(
+                f"/api/v1/projects/{second_slug}/imports",
+                json={
+                    "documents": [
+                        {**sample_document(35), "content_document": normalized_twin}
+                    ]
+                },
+                headers=ADMIN_HEADERS,
+            )
+            self.assertEqual(isolated.status_code, 201, isolated.get_json())
+            isolated_id = isolated.get_json()["documents"][0]["document_id"]
+            with get_db_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT COUNT(*)::int
+                        FROM public.quality_observation
+                        WHERE project_slug = %s
+                          AND document_id = %s
+                          AND rule_code LIKE 'QF_EXACT_DUPLICATE%%';
+                        """,
+                        (second_slug, isolated_id),
+                    )
+                    self.assertEqual(cur.fetchone()[0], 0)
+        finally:
+            delete_project(second_slug)
+
+        review_path = (
+            f"/projects/{self.project_slug}/documents/{duplicate_id}/review"
+        )
+        anonymous = app.test_client().get(review_path)
+        self.assertEqual(anonymous.status_code, 302)
+        with self.client.session_transaction() as browser_session:
+            browser_session["admin_authenticated"] = True
+            browser_session["admin_username"] = "quality-viewer"
+            browser_session["admin_role"] = "viewer"
+        review = self.client.get(review_path)
+        self.assertEqual(review.status_code, 200)
+        self.assertIn(b"QF_EXACT_DUPLICATE_NORMALIZED", review.data)
+        self.assertIn(first_id.encode("utf-8"), review.data)
+        denied_mutation = self.client.post(
+            f"/projects/{self.project_slug}/documents/{duplicate_id}/review/approval",
+            data={"status": "rejected"},
+        )
+        self.assertEqual(denied_mutation.status_code, 302)
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT approval_status FROM public.document_processing WHERE document_id = %s;",
+                    (duplicate_id,),
+                )
+                self.assertEqual(cur.fetchone()[0], "approved")
+        with self.client.session_transaction() as browser_session:
+            browser_session["admin_role"] = "editor"
+        allowed_mutation = self.client.post(
+            f"/projects/{self.project_slug}/documents/{duplicate_id}/review/approval",
+            data={"status": "approved"},
+        )
+        self.assertEqual(allowed_mutation.status_code, 302)
 
     def test_mcp_protocol_acl_and_all_business_tools(self):
         response, initialized = self.mcp("initialize", request_id="initialize")

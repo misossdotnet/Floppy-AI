@@ -39,12 +39,14 @@ APPLICATION_BOOTSTRAP_TABLES = (
     "shard_quality_run",
     "auth_token_revocation",
     "business_audit_event",
+    "quality_observation",
 )
 
 LEGACY_BOOTSTRAP_TABLES = tuple(
     table_name
     for table_name in APPLICATION_BOOTSTRAP_TABLES
-    if table_name not in {"auth_token_revocation", "business_audit_event"}
+    if table_name
+    not in {"auth_token_revocation", "business_audit_event", "quality_observation"}
 )
 
 

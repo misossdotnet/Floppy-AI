@@ -55,12 +55,13 @@
           </article>
           <article class="kpi-card">
             <p class="kpi-label">Dimensions</p>
-            <p class="kpi-value">{{ payload.status.embedding_dimensions }}</p>
+            <p class="kpi-value">{{ payload.status.embedding_dimensions or 'Auto' }}</p>
           </article>
         </div>
         {% if payload.status.error %}
           <div class="alert error">{{ payload.status.error }}</div>
         {% endif %}
+        <p class="muted-line">Source: <code>{{ payload.status.source }}</code></p>
         <p class="muted-line">Endpoint embeddings: <code>{{ payload.status.embedding_api_url or '-' }}</code></p>
       </section>
 
@@ -85,7 +86,8 @@
               <input type="text" name="embedding_model" value="{{ payload.config.embedding_model }}" placeholder="Par defaut: modele de la configuration LLM">
             </label>
             <label>embedding_dimensions
-              <input type="number" name="embedding_dimensions" value="{{ payload.config.embedding_dimensions }}" min="1" max="16000">
+              <input type="number" name="embedding_dimensions" value="{{ payload.config.embedding_dimensions or 0 }}" min="0" max="16000">
+              <span class="muted-line">0 = detection automatique au premier embedding.</span>
             </label>
             <label>batch_size
               <input type="number" name="batch_size" value="{{ payload.config.batch_size }}" min="1" max="500">

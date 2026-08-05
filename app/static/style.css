@@ -1452,3 +1452,33 @@ button:disabled,
     transform: scale(1.01);
   }
 }
+.quality-hashes code {
+  overflow-wrap: anywhere;
+}
+
+.quality-observation {
+  border-left: 4px solid var(--border, #d7dce5);
+}
+
+.quality-observation.severity-warning {
+  border-left-color: #c98516;
+}
+
+.quality-observation.severity-error {
+  border-left-color: #b42318;
+}
+
+.quality-severity-info {
+  background: #e8f1ff;
+  color: #184f90;
+}
+
+.quality-severity-warning {
+  background: #fff2d6;
+  color: #7a4700;
+}
+
+.quality-severity-error {
+  background: #fee4e2;
+  color: #912018;
+}

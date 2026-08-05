@@ -44,7 +44,9 @@ def parse_int(value, default: int, minimum: int, maximum: int) -> int:
 
 
 def normalize_embedding_dimensions(value) -> int:
-    """Normalize expected embedding dimensions."""
+    """Normalize expected dimensions; zero means detect from the provider."""
+    if value is None or str(value).strip().lower() in {"", "0", "auto"}:
+        return 0
     return parse_int(value, DEFAULT_EMBEDDING_DIMENSIONS, 1, 16000)
 
 
@@ -134,6 +136,50 @@ def env_vectorization_config():
     }
 
 
+def embedding_profile_configs(redact_key=True):
+    """Return enabled, usable LLM configurations dedicated to embeddings."""
+    return [
+        config
+        for config in list_llm_configs(redact_key=redact_key)
+        if config.get("enabled")
+        and config.get("configured")
+        and config.get("profile_type") == "embedding"
+    ]
+
+
+def fallback_vectorization_config():
+    """Resolve environment settings or one unambiguous embedding profile."""
+    env_config = env_vectorization_config()
+    has_explicit_environment = bool(
+        env_config.get("enabled")
+        or env_config.get("llm_config_id")
+        or env_config.get("embedding_api_url")
+        or env_config.get("embedding_model")
+    )
+    if has_explicit_environment:
+        return env_config
+
+    candidates = embedding_profile_configs(redact_key=True)
+    if len(candidates) == 1:
+        selected = candidates[0]
+        return {
+            **env_config,
+            "enabled": True,
+            "llm_config_id": selected["config_id"],
+            "embedding_dimensions": 0,
+            "source": "llm_profile",
+            "auto_selection_error": "",
+        }
+
+    error = ""
+    if len(candidates) > 1:
+        error = (
+            "Plusieurs configurations LLM actives ont le profil embedding; "
+            "selectionnez-en une explicitement."
+        )
+    return {**env_config, "auto_selection_error": error}
+
+
 def serialize_vector_config_row(row):
     """Serialize one vectorization config row."""
     if not row:
@@ -171,7 +217,7 @@ def get_vectorization_config():
                 )
                 row = cur.fetchone()
             conn.commit()
-        return serialize_vector_config_row(row)
+        return serialize_vector_config_row(row) if row else fallback_vectorization_config()
     except Exception:
         return env_vectorization_config()
 
@@ -266,7 +312,12 @@ def vectorization_status():
         "embedding_dimensions": config.get("embedding_dimensions"),
         "batch_size": config.get("batch_size"),
         "source": config.get("source", ""),
-        "error": "" if runtime.get("configured") else "Configuration vectorisation incomplete ou inactive.",
+        "error": (
+            ""
+            if runtime.get("configured")
+            else config.get("auto_selection_error")
+            or "Configuration vectorisation incomplete ou inactive."
+        ),
     }
 
 
@@ -347,13 +398,34 @@ def test_vectorization_config(text: str = ""):
         raise ValueError("Configuration vectorisation incomplete ou inactive.")
     sample_text = str(text or "").strip() or "Test de vectorisation Floppy-AI."
     embedding = execute_embedding_request(runtime_config, sample_text)
-    expected_dimensions = runtime_config["vector_config"].get("embedding_dimensions")
+    expected_dimensions = runtime_config["vector_config"].get("embedding_dimensions") or len(embedding)
     validate_embedding_dimensions(embedding, expected_dimensions)
     return {
         "ok": True,
         "embedding_dimensions": len(embedding),
         "embedding_model": runtime_config.get("model", ""),
         "embedding_api_url": runtime_config.get("api_url", ""),
+        "preview": embedding[:8],
+    }
+
+
+def test_embedding_llm_config(config, text: str = ""):
+    """Test one embedding-profile LLM config without requiring a vector row."""
+    runtime_config = {
+        **config,
+        "api_url": derive_embedding_api_url(config.get("api_url", "")),
+        "model": config.get("model", ""),
+        "timeout_seconds": normalize_timeout(config.get("timeout_seconds"), default=90),
+    }
+    if not runtime_config.get("api_url") or not runtime_config.get("model"):
+        raise ValueError("Configuration embeddings incomplete ou inactive.")
+    sample_text = str(text or "").strip() or "Test de vectorisation Floppy-AI."
+    embedding = execute_embedding_request(runtime_config, sample_text)
+    return {
+        "ok": True,
+        "embedding_dimensions": len(embedding),
+        "embedding_model": runtime_config["model"],
+        "embedding_api_url": runtime_config["api_url"],
         "preview": embedding[:8],
     }
 
@@ -491,7 +563,7 @@ def vectorize_project_data(project_slug: str, payload):
     targets = normalize_target_types(payload)
     missing_only = normalize_checkbox(payload, "missing_only", default=True)
     limit = parse_int(payload.get("limit"), runtime_config["vector_config"].get("batch_size"), 1, 1000)
-    expected_dimensions = runtime_config["vector_config"].get("embedding_dimensions")
+    expected_dimensions = runtime_config["vector_config"].get("embedding_dimensions") or 0
 
     processed = 0
     embedded = 0
@@ -533,6 +605,8 @@ def vectorize_project_data(project_slug: str, payload):
                         continue
                     try:
                         embedding = execute_embedding_request(runtime_config, row_text)
+                        if not expected_dimensions:
+                            expected_dimensions = len(embedding)
                         validate_embedding_dimensions(embedding, expected_dimensions)
                     except Exception as exc:
                         message = str(exc) or exc.__class__.__name__
@@ -611,9 +685,10 @@ def list_project_vector_status():
 
 def get_vectorization_admin_payload():
     """Build the admin vectorization payload."""
+    config = get_vectorization_config()
     return {
-        "config": get_vectorization_config(),
+        "config": config,
         "status": vectorization_status(),
-        "llm_configs": list_llm_configs(redact_key=True),
+        "llm_configs": embedding_profile_configs(redact_key=True),
         "projects": list_project_vector_status(),
     }

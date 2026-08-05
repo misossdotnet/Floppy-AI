@@ -25,7 +25,12 @@ DATASET_BUILD_TABLE = "dataset_build"
 DOCUMENT_REGISTRY_TABLE = "document_registry"
 DOCUMENT_REVIEW_ANNOTATION_TABLE = "document_review_annotation"
 DOCUMENT_SECTION_EXCLUSION_TABLE = "document_section_exclusion"
+QUALITY_OBSERVATION_TABLE = "quality_observation"
 DEFAULT_NORMALIZATION_VERSION = "v2"
+QUALITY_RULESET_VERSION = "quality-firewall/v1"
+QUALITY_HASH_ENCODING_VERSION = "utf8-sha256/v1"
+QUALITY_EVIDENCE_MAX_BYTES = 2048
+QUALITY_DUPLICATE_SCORE_DELTA = -0.15
 NORMALIZATION_STAGES = (
     "line_endings",
     "html_cleanup",
@@ -1012,8 +1017,9 @@ def upsert_document_registry_record(cur, document_id: str, project_slug: str):
         INSERT INTO public.{DOCUMENT_REGISTRY_TABLE} (
             document_id,
             project_slug,
+            created_at,
             updated_at
-        ) VALUES (%s, %s, now())
+        ) VALUES (%s, %s, clock_timestamp(), clock_timestamp())
         ON CONFLICT (document_id)
         DO UPDATE SET
             project_slug = EXCLUDED.project_slug,
@@ -1958,16 +1964,26 @@ def run_normalization_pipeline(raw_content, raw_options=None):
     }
 
 
-def compute_quality_score(text: str) -> float:
-    """Compute quality score."""
+def compute_quality_score_breakdown(text: str):
+    """Return the deterministic heuristic score and its weighted components."""
     cleaned = (text or "").strip()
     if not cleaned:
-        return 0.0
+        return {
+            "score": 0.0,
+            "token_count": 0,
+            "character_count": len(text or ""),
+            "components": [],
+        }
 
     token_list = re.findall(r"\w+", cleaned.lower())
     token_count = len(token_list)
     if token_count == 0:
-        return 0.0
+        return {
+            "score": 0.0,
+            "token_count": 0,
+            "character_count": len(cleaned),
+            "components": [],
+        }
 
     min_target = 40
     max_target = 380
@@ -1986,8 +2002,75 @@ def compute_quality_score(text: str) -> float:
     char_count = max(1, len(cleaned))
     noise_score = max(0.0, min(1.0, (alnum_chars / float(char_count)) * 1.2))
 
-    score = (0.5 * length_score) + (0.3 * lexical_score) + (0.2 * noise_score)
-    return round(max(0.0, min(1.0, score)), 4)
+    components = [
+        {
+            "rule_code": "QF_LENGTH_SCORE",
+            "component_score": round(length_score, 6),
+            "weight": 0.5,
+            "score_delta": round(0.5 * length_score, 6),
+            "evidence": {"token_count": token_count, "minimum_target": min_target,
+                         "maximum_target": max_target},
+        },
+        {
+            "rule_code": "QF_LEXICAL_DIVERSITY",
+            "component_score": round(lexical_score, 6),
+            "weight": 0.3,
+            "score_delta": round(0.3 * lexical_score, 6),
+            "evidence": {"token_count": token_count,
+                         "unique_token_count": len(set(token_list)),
+                         "unique_ratio": round(unique_ratio, 6)},
+        },
+        {
+            "rule_code": "QF_CHARACTER_SIGNAL",
+            "component_score": round(noise_score, 6),
+            "weight": 0.2,
+            "score_delta": round(0.2 * noise_score, 6),
+            "evidence": {"character_count": char_count,
+                         "alphanumeric_count": alnum_chars,
+                         "alphanumeric_ratio": round(alnum_chars / float(char_count), 6)},
+        },
+    ]
+    score = sum(component["score_delta"] for component in components)
+    return {
+        "score": round(max(0.0, min(1.0, score)), 4),
+        "token_count": token_count,
+        "character_count": char_count,
+        "components": components,
+    }
+
+
+def compute_quality_score(text: str) -> float:
+    """Compute the legacy-compatible deterministic document quality score."""
+    return compute_quality_score_breakdown(text)["score"]
+
+
+def sha256_text(value: str) -> str:
+    """Hash the exact UTF-8 representation of a text value with SHA-256."""
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()
+
+
+def quality_normalization_hash_version(normalization_version: str) -> str:
+    """Build the explicit version attached to normalized-content hashes."""
+    source_version = (normalization_version or DEFAULT_NORMALIZATION_VERSION).strip()
+    return f"{source_version}:{QUALITY_HASH_ENCODING_VERSION}"
+
+
+def bound_quality_evidence(evidence):
+    """Return a small JSON object suitable for non-sensitive quality evidence."""
+    safe_evidence = evidence if isinstance(evidence, dict) else {}
+    encoded = json.dumps(
+        safe_evidence,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if len(encoded) <= QUALITY_EVIDENCE_MAX_BYTES:
+        return safe_evidence
+    return {
+        "evidence_truncated": True,
+        "original_size_bytes": len(encoded),
+        "retained_keys": sorted(str(key)[:80] for key in safe_evidence)[:20],
+    }
 
 
 def build_structured_content(
@@ -2976,6 +3059,10 @@ def delete_project(project_slug: str):
             _ = find_project_by_slug(cur, project_slug)
             ensure_business_tables(cur)
             cur.execute(
+                f"DELETE FROM public.{QUALITY_OBSERVATION_TABLE} WHERE project_slug = %s;",
+                (project_slug,),
+            )
+            cur.execute(
                 f"DELETE FROM public.{DATASET_BUILD_TABLE} WHERE project_slug = %s;",
                 (project_slug,),
             )
@@ -3033,9 +3120,11 @@ def add_shard_record(project_slug: str, payload):
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             project = find_project_by_slug(cur, project_slug)
+            ensure_business_tables(cur)
             shard_table = f"{project_slug}_shard"
             if not table_exists(cur, shard_table):
                 raise ValueError(f"La table '{shard_table}' est introuvable.")
+            lock_project_corpus_mutation(cur, project_slug)
             cur.execute(
                 sql.SQL(
                     """
@@ -3061,6 +3150,26 @@ def add_shard_record(project_slug: str, payload):
                 ),
             )
             upsert_document_registry_record(cur, shard_uuid, project_slug)
+            pipeline = run_normalization_pipeline(content_document)
+            document = {
+                "uuid": shard_uuid,
+                "project_slug": project_slug,
+            }
+            upsert_document_processing_record(
+                cur,
+                document_id=shard_uuid,
+                project_slug=project_slug,
+                raw_content=content_document,
+                quality_score=compute_quality_score(pipeline["normalized_content"]),
+                approval_status="pending",
+            )
+            recalculate_document_quality_with_cursor(
+                cur,
+                document,
+                content_document,
+                pipeline["normalized_content"],
+                DEFAULT_NORMALIZATION_VERSION,
+            )
     return shard_uuid
 
 
@@ -3072,6 +3181,18 @@ def delete_shard_record(project_slug: str, shard_uuid: str):
             ensure_business_tables(cur)
             shard_table = f"{project_slug}_shard"
             chunk_table = f"{project_slug}_chunk"
+            cur.execute(
+                f"""
+                DELETE FROM public.{QUALITY_OBSERVATION_TABLE}
+                WHERE project_slug = %s
+                  AND (document_id = %s OR chunk_id IN (
+                      SELECT chunk_id
+                      FROM public.{CHUNK_METADATA_TABLE}
+                      WHERE project_slug = %s AND shard_id = %s
+                  ));
+                """,
+                (project_slug, shard_uuid, project_slug, shard_uuid),
+            )
             cur.execute(
                 f"DELETE FROM public.{CHUNK_METADATA_TABLE} WHERE project_slug = %s AND shard_id = %s;",
                 (project_slug, shard_uuid),
@@ -3245,6 +3366,13 @@ def delete_chunk_record(project_slug: str, chunk_uuid: str):
             )
             chunk_row = cur.fetchone()
             shard_id = chunk_row[0] if chunk_row else None
+            cur.execute(
+                f"""
+                DELETE FROM public.{QUALITY_OBSERVATION_TABLE}
+                WHERE project_slug = %s AND chunk_id = %s;
+                """,
+                (project_slug, chunk_uuid),
+            )
             cur.execute(
                 f"DELETE FROM public.{CHUNK_METADATA_TABLE} WHERE project_slug = %s AND chunk_id = %s;",
                 (project_slug, chunk_uuid),
@@ -4055,6 +4183,18 @@ def chunkify_project_shards(project_slug: str, options):
 
                 # Regeneration is idempotent: remove previous chunks for this shard first.
                 cur.execute(
+                    f"""
+                    DELETE FROM public.{QUALITY_OBSERVATION_TABLE}
+                    WHERE project_slug = %s
+                      AND chunk_id IN (
+                          SELECT chunk_id
+                          FROM public.{CHUNK_METADATA_TABLE}
+                          WHERE project_slug = %s AND shard_id = %s
+                      );
+                    """,
+                    (project_slug, project_slug, document["uuid"]),
+                )
+                cur.execute(
                     sql.SQL("DELETE FROM {} WHERE shard_id = %s;").format(
                         sql.Identifier("public", chunk_table)
                     ),
@@ -4673,6 +4813,433 @@ def upsert_document_processing_record(
     return get_document_processing_record(cur, document_id)
 
 
+def _score_quality_observations(score_breakdown, sha256_raw, sha256_normalized,
+                                normalization_hash_version):
+    """Build explainable observations for the existing heuristic score."""
+    if not score_breakdown["components"]:
+        return [
+            {
+                "rule_code": "QF_CONTENT_EMPTY",
+                "severity": "error",
+                "score_delta": 0.0,
+                "message": "La representation normalisee ne contient aucun texte exploitable.",
+                "evidence": {
+                    "token_count": score_breakdown["token_count"],
+                    "character_count": score_breakdown["character_count"],
+                },
+                "sha256_raw": sha256_raw,
+                "sha256_normalized": sha256_normalized,
+                "normalization_hash_version": normalization_hash_version,
+                "canonical_document_id": None,
+            }
+        ]
+
+    definitions = {
+        "QF_LENGTH_SCORE": (
+            "La longueur contribue au score qualite selon la plage cible de tokens.",
+            0.6,
+        ),
+        "QF_LEXICAL_DIVERSITY": (
+            "La diversite lexicale contribue au score qualite.",
+            0.35,
+        ),
+        "QF_CHARACTER_SIGNAL": (
+            "Le ratio de caracteres alphanumeriques contribue au score qualite.",
+            0.65,
+        ),
+    }
+    observations = []
+    for component in score_breakdown["components"]:
+        message, warning_threshold = definitions[component["rule_code"]]
+        evidence = {
+            **component["evidence"],
+            "component_score": component["component_score"],
+            "weight": component["weight"],
+        }
+        observations.append(
+            {
+                "rule_code": component["rule_code"],
+                "severity": (
+                    "warning"
+                    if component["component_score"] < warning_threshold
+                    else "info"
+                ),
+                "score_delta": component["score_delta"],
+                "message": message,
+                "evidence": evidence,
+                "sha256_raw": sha256_raw,
+                "sha256_normalized": sha256_normalized,
+                "normalization_hash_version": normalization_hash_version,
+                "canonical_document_id": None,
+            }
+        )
+    return observations
+
+
+def find_quality_duplicate_canonical(
+    cur,
+    project_slug: str,
+    document_id: str,
+    sha256_raw: str,
+    sha256_normalized: str,
+    normalization_hash_version: str,
+):
+    """Return the stable project-local canonical and exact match type, if any."""
+    cur.execute(
+        f"""
+        WITH matches AS (
+            SELECT
+                document_id,
+                bool_or(sha256_raw = %s) AS raw_match,
+                bool_or(
+                    normalization_hash_version = %s
+                    AND sha256_normalized = %s
+                ) AS normalized_match
+            FROM public.{QUALITY_OBSERVATION_TABLE}
+            WHERE project_slug = %s
+              AND document_id IS NOT NULL
+              AND document_id <> %s
+              AND (
+                    sha256_raw = %s
+                    OR (
+                        normalization_hash_version = %s
+                        AND sha256_normalized = %s
+                    )
+              )
+            GROUP BY document_id
+        )
+        SELECT
+            registry.document_id,
+            COALESCE(matches.raw_match, false),
+            COALESCE(matches.normalized_match, false)
+        FROM public.{DOCUMENT_REGISTRY_TABLE} AS registry
+        LEFT JOIN matches ON matches.document_id = registry.document_id
+        WHERE registry.project_slug = %s
+          AND (registry.document_id = %s OR matches.document_id IS NOT NULL)
+        ORDER BY registry.created_at, registry.document_id
+        LIMIT 1;
+        """,
+        (
+            sha256_raw,
+            normalization_hash_version,
+            sha256_normalized,
+            project_slug,
+            document_id,
+            sha256_raw,
+            normalization_hash_version,
+            sha256_normalized,
+            project_slug,
+            document_id,
+        ),
+    )
+    row = cur.fetchone()
+    if not row or row[0] == document_id:
+        return None
+    return {
+        "canonical_document_id": row[0],
+        "match_type": "raw" if row[1] else "normalized",
+    }
+
+
+def persist_quality_observations(
+    cur,
+    project_slug: str,
+    document_id: str,
+    observations,
+    ruleset_version: str = QUALITY_RULESET_VERSION,
+):
+    """Persist one ruleset idempotently while retaining other ruleset versions."""
+    rule_codes = []
+    for observation in observations:
+        rule_code = observation["rule_code"]
+        rule_codes.append(rule_code)
+        hash_version = observation["normalization_hash_version"]
+        identity = "\x00".join(
+            [
+                project_slug,
+                "document",
+                document_id,
+                rule_code,
+                ruleset_version,
+                hash_version,
+            ]
+        )
+        observation_id = "qf_" + hashlib.sha256(
+            identity.encode("utf-8")
+        ).hexdigest()[:40]
+        evidence = bound_quality_evidence(observation.get("evidence"))
+        cur.execute(
+            f"""
+            INSERT INTO public.{QUALITY_OBSERVATION_TABLE} (
+                observation_id,
+                project_slug,
+                document_id,
+                chunk_id,
+                rule_code,
+                ruleset_version,
+                severity,
+                score_delta,
+                message,
+                evidence,
+                sha256_raw,
+                sha256_normalized,
+                normalization_hash_version,
+                canonical_document_id,
+                updated_at
+            ) VALUES (
+                %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, now()
+            )
+            ON CONFLICT (observation_id)
+            DO UPDATE SET
+                severity = EXCLUDED.severity,
+                score_delta = EXCLUDED.score_delta,
+                message = EXCLUDED.message,
+                evidence = EXCLUDED.evidence,
+                sha256_raw = EXCLUDED.sha256_raw,
+                sha256_normalized = EXCLUDED.sha256_normalized,
+                normalization_hash_version = EXCLUDED.normalization_hash_version,
+                canonical_document_id = EXCLUDED.canonical_document_id,
+                updated_at = now();
+            """,
+            (
+                observation_id,
+                project_slug,
+                document_id,
+                rule_code,
+                ruleset_version,
+                observation["severity"],
+                observation.get("score_delta"),
+                observation["message"][:500],
+                Json(evidence),
+                observation.get("sha256_raw"),
+                observation.get("sha256_normalized"),
+                hash_version,
+                observation.get("canonical_document_id"),
+            ),
+        )
+
+    cur.execute(
+        f"""
+        DELETE FROM public.{QUALITY_OBSERVATION_TABLE}
+        WHERE project_slug = %s
+          AND document_id = %s
+          AND ruleset_version = %s
+          AND normalization_hash_version = %s
+          AND NOT (rule_code = ANY(%s));
+        """,
+        (
+            project_slug,
+            document_id,
+            ruleset_version,
+            observations[0]["normalization_hash_version"],
+            rule_codes,
+        ),
+    )
+
+
+def list_document_quality_observations(
+    cur,
+    project_slug: str,
+    document_id: str,
+    ruleset_version: str = QUALITY_RULESET_VERSION,
+    normalization_hash_version: str = "",
+):
+    """Read explainable observations for one document and ruleset."""
+    cur.execute(
+        f"""
+        SELECT
+            observation_id,
+            rule_code,
+            ruleset_version,
+            severity,
+            score_delta,
+            message,
+            evidence,
+            sha256_raw,
+            sha256_normalized,
+            normalization_hash_version,
+            canonical_document_id,
+            created_at,
+            updated_at
+        FROM public.{QUALITY_OBSERVATION_TABLE}
+        WHERE project_slug = %s
+          AND document_id = %s
+          AND ruleset_version = %s
+          AND normalization_hash_version = COALESCE(
+              NULLIF(%s, ''),
+              (
+                  SELECT latest.normalization_hash_version
+                  FROM public.{QUALITY_OBSERVATION_TABLE} AS latest
+                  WHERE latest.project_slug = %s
+                    AND latest.document_id = %s
+                    AND latest.ruleset_version = %s
+                  ORDER BY latest.updated_at DESC, latest.normalization_hash_version
+                  LIMIT 1
+              )
+          )
+        ORDER BY
+            CASE severity WHEN 'error' THEN 1 WHEN 'warning' THEN 2 ELSE 3 END,
+            rule_code;
+        """,
+        (
+            project_slug,
+            document_id,
+            ruleset_version,
+            normalization_hash_version,
+            project_slug,
+            document_id,
+            ruleset_version,
+        ),
+    )
+    return [
+        {
+            "observation_id": row[0],
+            "rule_code": row[1],
+            "ruleset_version": row[2],
+            "severity": row[3],
+            "score_delta": float(row[4]) if row[4] is not None else None,
+            "message": row[5],
+            "evidence": row[6] or {},
+            "sha256_raw": row[7] or "",
+            "sha256_normalized": row[8] or "",
+            "normalization_hash_version": row[9],
+            "canonical_document_id": row[10],
+            "created_at": to_iso_or_none(row[11]),
+            "updated_at": to_iso_or_none(row[12]),
+        }
+        for row in cur.fetchall()
+    ]
+
+
+def _quality_summary(observations):
+    """Aggregate persisted observations into a review-friendly score summary."""
+    positive = sum(
+        item["score_delta"] or 0.0
+        for item in observations
+        if (item["score_delta"] or 0.0) > 0
+    )
+    penalties = sum(
+        item["score_delta"] or 0.0
+        for item in observations
+        if (item["score_delta"] or 0.0) < 0
+    )
+    first = observations[0] if observations else {}
+    return {
+        "ruleset_version": QUALITY_RULESET_VERSION,
+        "normalization_hash_version": first.get("normalization_hash_version", ""),
+        "sha256_raw": first.get("sha256_raw", ""),
+        "sha256_normalized": first.get("sha256_normalized", ""),
+        "base_score": round(positive, 4),
+        "penalty_total": round(penalties, 4),
+        "score": round(max(0.0, min(1.0, positive + penalties)), 4),
+        "observations": observations,
+    }
+
+
+def recalculate_document_quality_with_cursor(
+    cur,
+    document,
+    raw_content: str,
+    normalized_content: str,
+    normalization_version: str,
+):
+    """Recalculate and persist Quality Firewall v1 in an existing transaction."""
+    raw_hash = sha256_text(raw_content)
+    normalized_hash = sha256_text(normalized_content)
+    hash_version = quality_normalization_hash_version(normalization_version)
+    score_breakdown = compute_quality_score_breakdown(normalized_content)
+    observations = _score_quality_observations(
+        score_breakdown,
+        raw_hash,
+        normalized_hash,
+        hash_version,
+    )
+    duplicate = find_quality_duplicate_canonical(
+        cur,
+        document["project_slug"],
+        document["uuid"],
+        raw_hash,
+        normalized_hash,
+        hash_version,
+    )
+    if duplicate:
+        raw_match = duplicate["match_type"] == "raw"
+        observations.append(
+            {
+                "rule_code": (
+                    "QF_EXACT_DUPLICATE_RAW"
+                    if raw_match
+                    else "QF_EXACT_DUPLICATE_NORMALIZED"
+                ),
+                "severity": "warning",
+                "score_delta": QUALITY_DUPLICATE_SCORE_DELTA,
+                "message": (
+                    "La source brute est identique a un document canonique du projet."
+                    if raw_match
+                    else "La forme normalisee est identique a un document canonique du projet."
+                ),
+                "evidence": {
+                    "match_type": duplicate["match_type"],
+                    "canonical_document_id": duplicate["canonical_document_id"],
+                    "hash_prefix": (raw_hash if raw_match else normalized_hash)[:12],
+                },
+                "sha256_raw": raw_hash,
+                "sha256_normalized": normalized_hash,
+                "normalization_hash_version": hash_version,
+                "canonical_document_id": duplicate["canonical_document_id"],
+            }
+        )
+
+    persist_quality_observations(
+        cur,
+        document["project_slug"],
+        document["uuid"],
+        observations,
+    )
+    persisted = list_document_quality_observations(
+        cur,
+        document["project_slug"],
+        document["uuid"],
+        normalization_hash_version=hash_version,
+    )
+    summary = _quality_summary(persisted)
+    upsert_document_processing_record(
+        cur,
+        document_id=document["uuid"],
+        project_slug=document["project_slug"],
+        quality_score=summary["score"],
+    )
+    return summary
+
+
+def recalculate_document_quality(
+    document_id: str,
+    project_slug: str = "",
+):
+    """Recalculate Quality Firewall v1 for one existing document."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            ensure_business_tables(cur)
+            document = find_document_record(cur, document_id, project_slug)
+            lock_project_corpus_mutation(cur, document["project_slug"])
+            processing = get_document_processing_record(cur, document["uuid"])
+            if processing and processing.get("normalized_content"):
+                normalized_content = processing["normalized_content"]
+                normalization_version = processing["normalization_version"]
+            else:
+                pipeline = run_normalization_pipeline(document["content_document"])
+                normalized_content = pipeline["normalized_content"]
+                normalization_version = DEFAULT_NORMALIZATION_VERSION
+            return recalculate_document_quality_with_cursor(
+                cur,
+                document,
+                document["content_document"],
+                normalized_content,
+                normalization_version,
+            )
+
+
 def list_document_review_annotations(cur, project_slug: str, document_id: str):
     """Return human review annotations for one document."""
     ensure_business_tables(cur)
@@ -5028,6 +5595,16 @@ def get_document_review_payload(project_slug: str, document_id: str):
                 excluded_section_paths,
             )
             annotations = list_document_review_annotations(cur, document["project_slug"], document["uuid"])
+            quality_observations = list_document_quality_observations(
+                cur,
+                document["project_slug"],
+                document["uuid"],
+                normalization_hash_version=quality_normalization_hash_version(
+                    processing["normalization_version"]
+                ),
+            )
+
+    quality_firewall = _quality_summary(quality_observations)
 
     sections = processing.get("structured_content", {}).get("sections", [])
     chunk_metadata = [
@@ -5077,6 +5654,7 @@ def get_document_review_payload(project_slug: str, document_id: str):
         "chunk_metadata": chunk_metadata,
         "annotations": annotations,
         "exclusions": exclusions,
+        "quality_firewall": quality_firewall,
     }
 
     return {
@@ -5088,6 +5666,7 @@ def get_document_review_payload(project_slug: str, document_id: str):
         "chunks": chunks,
         "annotations": annotations,
         "exclusions": exclusions,
+        "quality_firewall": quality_firewall,
         "metadata": metadata,
     }
 
@@ -5466,7 +6045,10 @@ def import_documents_for_project(project_slug: str, documents):
                 )
                 upsert_document_registry_record(cur, shard_uuid, project_slug)
 
-                initial_quality_score = compute_quality_score(content_document)
+                pipeline = run_normalization_pipeline(content_document)
+                initial_quality_score = compute_quality_score(
+                    pipeline["normalized_content"]
+                )
                 _ = upsert_document_processing_record(
                     cur,
                     document_id=shard_uuid,
@@ -5475,13 +6057,25 @@ def import_documents_for_project(project_slug: str, documents):
                     quality_score=initial_quality_score,
                     approval_status="pending",
                 )
+                quality = recalculate_document_quality_with_cursor(
+                    cur,
+                    {
+                        "uuid": shard_uuid,
+                        "project_slug": project_slug,
+                    },
+                    content_document,
+                    pipeline["normalized_content"],
+                    DEFAULT_NORMALIZATION_VERSION,
+                )
 
                 imported_documents.append(
                     {
                         "document_id": shard_uuid,
                         "title_document": title_document,
                         "source_document": source_document,
-                        "quality_score": initial_quality_score,
+                        "quality_score": quality["score"],
+                        "sha256_raw": quality["sha256_raw"],
+                        "sha256_normalized": quality["sha256_normalized"],
                     }
                 )
 
@@ -5508,6 +6102,7 @@ def normalize_document_by_id(
         with conn.cursor() as cur:
             ensure_business_tables(cur)
             document = find_document_record(cur, document_id, project_slug)
+            lock_project_corpus_mutation(cur, document["project_slug"])
             pipeline = run_normalization_pipeline(
                 document["content_document"],
                 normalization_options,
@@ -5535,12 +6130,20 @@ def normalize_document_by_id(
                 extracted_metadata=pipeline["extracted_metadata"],
                 quality_score=quality_score,
             )
+            quality = recalculate_document_quality_with_cursor(
+                cur,
+                document,
+                document["content_document"],
+                normalized_content,
+                version,
+            )
 
     return {
         "document_id": document["uuid"],
         "project_slug": document["project_slug"],
         "normalization_version": version,
-        "quality_score": quality_score,
+        "quality_score": quality["score"],
+        "quality": quality,
         "raw_content": pipeline["raw_content"],
         "normalized_content": normalized_content,
         "rendered_text": pipeline["rendered_text"],

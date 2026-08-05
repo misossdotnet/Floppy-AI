@@ -1293,6 +1293,54 @@ def test_llm_config(config_id, prompt=""):
     if not config.get("configured"):
         raise ValueError("Configuration LLM incomplete ou inactive.")
 
+    if config.get("profile_type") == "embedding":
+        from vectorization import derive_embedding_api_url, test_embedding_llm_config
+
+        sample_text = str(prompt or "").strip() or "Test de vectorisation Floppy-AI."
+        audit_config = {
+            **config,
+            "api_url": derive_embedding_api_url(config.get("api_url", "")),
+        }
+        audit_session_id = start_llm_audit_session(
+            audit_config,
+            "llm_config_embedding_test",
+            {"tested_config_id": cleaned_config_id},
+        )
+        request_payload = {"model": config.get("model", ""), "input": sample_text}
+        try:
+            result = test_embedding_llm_config(config, sample_text)
+            record_llm_exchange(
+                audit_session_id,
+                request_payload,
+                response_payload={
+                    "embedding_dimensions": result["embedding_dimensions"],
+                    "embedding_preview": result["preview"],
+                },
+            )
+            finish_llm_audit_session(audit_session_id, "success")
+        except Exception as exc:
+            error_message = str(exc) or exc.__class__.__name__
+            record_llm_exchange(
+                audit_session_id,
+                request_payload,
+                error_message=error_message,
+            )
+            finish_llm_audit_session(audit_session_id, "error", error_message)
+            raise
+        return {
+            "config_id": cleaned_config_id,
+            "name": config.get("name", ""),
+            "provider": config.get("provider", ""),
+            "model": config.get("model", ""),
+            "content": (
+                "Embedding valide: "
+                f"{result['embedding_dimensions']} dimensions."
+            ),
+            "embedding_dimensions": result["embedding_dimensions"],
+            "embedding_api_url": result["embedding_api_url"],
+            "audit_session_id": audit_session_id,
+        }
+
     test_prompt = str(prompt or "").strip() or (
         "Reponds en une phrase courte pour confirmer que cette configuration LLM fonctionne."
     )

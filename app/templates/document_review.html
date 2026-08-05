@@ -81,6 +81,56 @@
         </form>
       </section>
 
+      <section class="card quality-firewall-card">
+        <h2>Quality Firewall</h2>
+        {% if payload.quality_firewall.observations %}
+          <div class="project-stats">
+            <span class="stat-chip">Ruleset <strong>{{ payload.quality_firewall.ruleset_version }}</strong></span>
+            <span class="stat-chip">Score heuristique <strong>{{ "%.4f"|format(payload.quality_firewall.base_score) }}</strong></span>
+            <span class="stat-chip">Penalites <strong>{{ "%+.4f"|format(payload.quality_firewall.penalty_total) }}</strong></span>
+            <span class="stat-chip">Score final <strong>{{ "%.4f"|format(payload.quality_firewall.score) }}</strong></span>
+          </div>
+          <details>
+            <summary>Empreintes versionnees</summary>
+            <div class="details-grid quality-hashes">
+              <p class="muted-line">Version: <code>{{ payload.quality_firewall.normalization_hash_version }}</code></p>
+              <p class="muted-line">SHA-256 brut: <code>{{ payload.quality_firewall.sha256_raw }}</code></p>
+              <p class="muted-line">SHA-256 normalise: <code>{{ payload.quality_firewall.sha256_normalized }}</code></p>
+            </div>
+          </details>
+          <div class="review-list quality-observation-list">
+            {% for observation in payload.quality_firewall.observations %}
+              <article class="review-list-item quality-observation severity-{{ observation.severity }}">
+                <div>
+                  <p>
+                    <span class="status-badge quality-severity-{{ observation.severity }}">{{ observation.severity }}</span>
+                    <strong><code>{{ observation.rule_code }}</code></strong>
+                    {% if observation.score_delta is not none %}
+                      <span class="muted-line">Delta {{ "%+.4f"|format(observation.score_delta) }}</span>
+                    {% endif %}
+                  </p>
+                  <p>{{ observation.message }}</p>
+                  {% if observation.canonical_document_id %}
+                    <p>
+                      Document canonique :
+                      <a class="ghost-link" href="{{ url_for('project_document_review', project_slug=payload.project.slug, document_id=observation.canonical_document_id) }}">
+                        {{ observation.canonical_document_id }}
+                      </a>
+                    </p>
+                  {% endif %}
+                  <details>
+                    <summary>Evidence bornee</summary>
+                    <pre class="document-content compact-json">{{ observation.evidence | tojson(indent=2) }}</pre>
+                  </details>
+                </div>
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="empty">Aucune observation persistee. Normalisez le document pour calculer le ruleset courant.</p>
+        {% endif %}
+      </section>
+
       <section class="card">
         <h2>Decision de revue</h2>
         <form method="post" action="{{ url_for('project_document_review_approve', project_slug=payload.project.slug, document_id=payload.document.uuid) }}" class="review-form">
